@@ -99,6 +99,17 @@ func (m *InteractiveSessionManager) GetSession(sessionID string) *InteractiveSes
 	return m.sessions[sessionID]
 }
 
+// ListSessions returns all active interactive sessions.
+func (m *InteractiveSessionManager) ListSessions() []*InteractiveSession {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	sessions := make([]*InteractiveSession, 0, len(m.sessions))
+	for _, s := range m.sessions {
+		sessions = append(sessions, s)
+	}
+	return sessions
+}
+
 // ActivateSession transitions a session from pending to active.
 func (m *InteractiveSessionManager) ActivateSession(sessionID string) {
 	m.mu.Lock()
