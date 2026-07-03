@@ -41,6 +41,7 @@ type ClientAPIConfig struct {
 // clientWSState tracks the state of a client API WebSocket connection.
 type clientWSState struct {
 	mu               sync.Mutex
+	writeMu          sync.Mutex // serializes conn writes — gorilla panics on concurrent writers
 	apiKey           string
 	masterAPIKey     string
 	userID           int64  // relay DB user ID; 0 for connection-token auth or unknown
@@ -169,7 +170,7 @@ func startClientWSPumps(conn *websocket.Conn, manager *ClientManager, pending *P
 	log.Info().Str("clientId", clientID).Int64("userId", userID).Str("keyPrefix", kp).Msg("Client WS connected")
 
 	// Send welcome
-	sendWSJSON(conn, map[string]interface{}{
+	state.send(map[string]interface{}{
 		"type":           "connected",
 		"clientId":       clientID,
 		"supportedTypes": pendingRequestTypesList(),
@@ -216,7 +217,7 @@ func startClientWSPumps(conn *websocket.Conn, manager *ClientManager, pending *P
 
 			var msg map[string]interface{}
 			if err := json.Unmarshal(messageBytes, &msg); err != nil {
-				sendWSJSON(conn, map[string]interface{}{"type": "error", "error": "Invalid JSON"})
+				state.send(map[string]interface{}{"type": "error", "error": "Invalid JSON"})
 				continue
 			}
 
@@ -225,7 +226,7 @@ func startClientWSPumps(conn *websocket.Conn, manager *ClientManager, pending *P
 				allowed, errMsg := cfg.TrackUsage(state.masterAPIKey)
 				if !allowed {
 					requestID, _ := msg["requestId"].(string)
-					sendWSJSON(conn, map[string]interface{}{"type": "error", "error": errMsg, "requestId": requestID})
+					state.send(map[string]interface{}{"type": "error", "error": errMsg, "requestId": requestID})
 					continue
 				}
 			}
@@ -317,13 +318,13 @@ func handleClientWSMessage(state *clientWSState, manager *ClientManager, pending
 	requestID, _ := msg["requestId"].(string)
 
 	if msgType == "" {
-		sendWSJSON(state.conn, map[string]interface{}{"type": "error", "error": "Missing \"type\" field", "requestId": requestID})
+		state.send(map[string]interface{}{"type": "error", "error": "Missing \"type\" field", "requestId": requestID})
 		return
 	}
 
 	// Ping
 	if msgType == "ping" {
-		sendWSJSON(state.conn, map[string]interface{}{"type": "pong", "requestId": requestID})
+		state.send(map[string]interface{}{"type": "pong", "requestId": requestID})
 		return
 	}
 
@@ -353,7 +354,7 @@ func handleClientWSMessage(state *clientWSState, manager *ClientManager, pending
 
 	// Validate message type
 	if !PendingRequestTypes[msgType] {
-		sendWSJSON(state.conn, map[string]interface{}{
+		state.send(map[string]interface{}{
 			"type":      "error",
 			"error":     fmt.Sprintf("Unknown message type: %q", msgType),
 			"requestId": requestID,
@@ -362,14 +363,14 @@ func handleClientWSMessage(state *clientWSState, manager *ClientManager, pending
 	}
 
 	if requestID == "" {
-		sendWSJSON(state.conn, map[string]interface{}{"type": "error", "error": "Missing \"requestId\" field for request messages"})
+		state.send(map[string]interface{}{"type": "error", "error": "Missing \"requestId\" field for request messages"})
 		return
 	}
 
 	// Get Foundry client
 	foundryClient := manager.GetClient(state.clientID)
 	if foundryClient == nil {
-		sendWSJSON(state.conn, map[string]interface{}{
+		state.send(map[string]interface{}{
 			"type":      fmt.Sprintf("%s-result", msgType),
 			"requestId": requestID,
 			"error":     "Foundry client is no longer connected",
@@ -417,7 +418,7 @@ func handleClientWSMessage(state *clientWSState, manager *ClientManager, pending
 		state.mu.Lock()
 		delete(state.pendingRequestIDs, internalID)
 		state.mu.Unlock()
-		sendWSJSON(state.conn, map[string]interface{}{
+		state.send(map[string]interface{}{
 			"type":      fmt.Sprintf("%s-result", msgType),
 			"requestId": requestID,
 			"error":     "Failed to send request to Foundry client",
@@ -435,7 +436,7 @@ func handleClientWSMessage(state *clientWSState, manager *ClientManager, pending
 		state.mu.Lock()
 		delete(state.pendingRequestIDs, internalID)
 		state.mu.Unlock()
-		sendWSJSON(state.conn, map[string]interface{}{
+		state.send(map[string]interface{}{
 			"type":      fmt.Sprintf("%s-result", msgType),
 			"requestId": requestID,
 			"error":     "Too many concurrent requests; try again shortly",
@@ -466,7 +467,7 @@ func handleClientWSMessage(state *clientWSState, manager *ClientManager, pending
 					responseData["type"] = fmt.Sprintf("%s-result", msgType)
 					responseData["requestId"] = clientReqID
 					responseData["clientId"] = state.clientID
-					sendWSJSON(state.conn, responseData)
+					state.send(responseData)
 				}
 			}
 		case <-time.After(30 * time.Second):
@@ -476,7 +477,7 @@ func handleClientWSMessage(state *clientWSState, manager *ClientManager, pending
 			delete(state.pendingRequestIDs, internalID)
 			state.mu.Unlock()
 
-			sendWSJSON(state.conn, map[string]interface{}{
+			state.send(map[string]interface{}{
 				"type":      fmt.Sprintf("%s-result", msgType),
 				"requestId": clientReqID,
 				"error":     "Request timed out",
@@ -496,7 +497,7 @@ func handleWSSubscribe(state *clientWSState, manager *ClientManager, msg map[str
 		"hooks": true, "combat-events": true, "actor-events": true, "scene-events": true,
 	}
 	if !validChannels[channel] {
-		sendWSJSON(state.conn, map[string]interface{}{
+		state.send(map[string]interface{}{
 			"type":      "error",
 			"error":     fmt.Sprintf("Invalid channel: %q. Supported: chat-events, roll-events, hooks, combat-events, actor-events, scene-events", channel),
 			"requestId": requestID,
@@ -505,17 +506,17 @@ func handleWSSubscribe(state *clientWSState, manager *ClientManager, msg map[str
 	}
 
 	if cfg.SSEManager == nil {
-		sendWSJSON(state.conn, map[string]interface{}{"type": "subscribed", "channel": channel, "requestId": requestID})
+		state.send(map[string]interface{}{"type": "subscribed", "channel": channel, "requestId": requestID})
 		return
 	}
 
 	sendFunc := func(data interface{}) bool {
-		return sendWSJSONSafe(state.conn, state.done, data)
+		return state.sendSafe(data)
 	}
 
 	remove, ok := cfg.SSEManager.AddWSEventFunc(state.clientID, channel, sendFunc)
 	if !ok {
-		sendWSJSON(state.conn, map[string]interface{}{
+		state.send(map[string]interface{}{
 			"type":      "error",
 			"error":     "Maximum event subscriptions reached for this client",
 			"requestId": requestID,
@@ -532,7 +533,7 @@ func handleWSSubscribe(state *clientWSState, manager *ClientManager, msg map[str
 	})
 	state.mu.Unlock()
 
-	sendWSJSON(state.conn, map[string]interface{}{"type": "subscribed", "channel": channel, "requestId": requestID})
+	state.send(map[string]interface{}{"type": "subscribed", "channel": channel, "requestId": requestID})
 	log.Debug().Str("clientId", state.clientID).Str("channel", channel).Msg("Client WS subscribed")
 }
 
@@ -559,13 +560,30 @@ func handleWSUnsubscribe(state *clientWSState, msg map[string]interface{}) {
 	if channel == "" {
 		channel = "all"
 	}
-	sendWSJSON(state.conn, map[string]interface{}{"type": "unsubscribed", "channel": channel, "removed": removed, "requestId": requestID})
+	state.send(map[string]interface{}{"type": "unsubscribed", "channel": channel, "removed": removed, "requestId": requestID})
 	log.Debug().Str("clientId", state.clientID).Str("channel", channel).Int("removed", removed).Msg("Client WS unsubscribed")
 }
 
-func sendWSJSONSafe(conn *websocket.Conn, done chan struct{}, data interface{}) bool {
+// send writes a JSON message to the connection under writeMu. Event fanout
+// (Foundry read-loop goroutine), request responses (per-request goroutines),
+// and the read pump all write to this socket; unserialized writes panic
+// gorilla/websocket ("concurrent write to websocket connection") and killed
+// the AI engine's connection mid scene-switch.
+func (s *clientWSState) send(data interface{}) {
+	msg, err := json.Marshal(data)
+	if err != nil {
+		return
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	s.conn.WriteMessage(websocket.TextMessage, msg)
+}
+
+// sendSafe is send() for event subscriptions: returns false once the
+// connection is closed so the subscription gets pruned.
+func (s *clientWSState) sendSafe(data interface{}) bool {
 	select {
-	case <-done:
+	case <-s.done:
 		return false
 	default:
 	}
@@ -573,18 +591,20 @@ func sendWSJSONSafe(conn *websocket.Conn, done chan struct{}, data interface{}) 
 	if err != nil {
 		return false
 	}
-	return conn.WriteMessage(websocket.TextMessage, msg) == nil
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return s.conn.WriteMessage(websocket.TextMessage, msg) == nil
 }
 
 func handleInteractiveSessionStart(state *clientWSState, manager *ClientManager, cfg *ClientAPIConfig, msg map[string]interface{}) {
 	if cfg.InteractiveSessions == nil {
-		sendWSJSON(state.conn, map[string]interface{}{"type": "interactive-session-error", "error": "Interactive sessions not available"})
+		state.send(map[string]interface{}{"type": "interactive-session-error", "error": "Interactive sessions not available"})
 		return
 	}
 
 	foundryClient := manager.GetClient(state.clientID)
 	if foundryClient == nil {
-		sendWSJSON(state.conn, map[string]interface{}{"type": "interactive-session-error", "error": "Foundry client is no longer connected"})
+		state.send(map[string]interface{}{"type": "interactive-session-error", "error": "Foundry client is no longer connected"})
 		return
 	}
 
@@ -602,7 +622,7 @@ func handleInteractiveSessionStart(state *clientWSState, manager *ClientManager,
 		UUID: uuid, Quality: quality, Scale: scale,
 	})
 	if err != nil {
-		sendWSJSON(state.conn, map[string]interface{}{"type": "interactive-session-error", "error": err.Error()})
+		state.send(map[string]interface{}{"type": "interactive-session-error", "error": err.Error()})
 		return
 	}
 
@@ -629,7 +649,7 @@ func handleInteractiveSessionStart(state *clientWSState, manager *ClientManager,
 
 	if !foundryClient.Send(payload) {
 		cfg.InteractiveSessions.EndSession(sessionID)
-		sendWSJSON(state.conn, map[string]interface{}{"type": "interactive-session-error", "error": "Failed to send session start to Foundry"})
+		state.send(map[string]interface{}{"type": "interactive-session-error", "error": "Failed to send session start to Foundry"})
 	}
 }
 
@@ -641,7 +661,7 @@ func handleInteractiveInput(state *clientWSState, manager *ClientManager, cfg *C
 	sessionID, _ := msg["sessionId"].(string)
 	session := cfg.InteractiveSessions.GetSession(sessionID)
 	if session == nil || session.ConsumerConn != state.conn {
-		sendWSJSON(state.conn, map[string]interface{}{"type": "interactive-session-error", "sessionId": sessionID, "error": "Invalid session"})
+		state.send(map[string]interface{}{"type": "interactive-session-error", "sessionId": sessionID, "error": "Invalid session"})
 		return
 	}
 
@@ -649,7 +669,7 @@ func handleInteractiveInput(state *clientWSState, manager *ClientManager, cfg *C
 
 	foundryClient := manager.GetClient(state.clientID)
 	if foundryClient == nil {
-		sendWSJSON(state.conn, map[string]interface{}{"type": "interactive-session-error", "sessionId": sessionID, "error": "Foundry client disconnected"})
+		state.send(map[string]interface{}{"type": "interactive-session-error", "sessionId": sessionID, "error": "Foundry client disconnected"})
 		cfg.InteractiveSessions.EndSession(sessionID)
 		return
 	}
