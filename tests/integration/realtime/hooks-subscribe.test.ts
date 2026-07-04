@@ -9,7 +9,7 @@
 import { describe, test, expect, afterAll, afterEach } from '@jest/globals';
 import { makeRequest, replaceVariables } from '../../helpers/apiRequest';
 import { testVariables, setVariable } from '../../helpers/testVariables';
-import { forEachVersion } from '../../helpers/multiVersion';
+import { forEachVersion, hasCachedClientId } from '../../helpers/multiVersion';
 import { WsTestClient } from '../../helpers/wsClient';
 import { captureWsExample, saveWsExamples } from '../../helpers/captureWsExample';
 import * as path from 'path';
@@ -50,6 +50,7 @@ describe('Hooks Subscribe', () => {
 
   forEachVersion((version, getClientId) => {
     let createdActorUuid: string | null = null;
+    const maybeTest = hasCachedClientId(version) ? test : test.skip;
 
     describe(`Hooks subscription (v${version})`, () => {
       afterEach(async () => {
@@ -72,12 +73,8 @@ describe('Hooks Subscribe', () => {
         }
       });
 
-      test('WS subscribe to hooks channel', async () => {
+      maybeTest('WS subscribe to hooks channel', async () => {
         const clientId = getClientId();
-        if (!clientId) {
-          console.log('  Skipping: no clientId available');
-          return;
-        }
 
         const client = createClient();
         const connected = await client.connect(wsUrl, getApiKey(), clientId);
@@ -104,12 +101,8 @@ describe('Hooks Subscribe', () => {
         }
       }, 15000);
 
-      test('WS subscribe and receive a hook event', async () => {
+      maybeTest('WS subscribe and receive a hook event', async () => {
         const clientId = getClientId();
-        if (!clientId) {
-          console.log('  Skipping: no clientId available');
-          return;
-        }
 
         const client = createClient();
         const connected = await client.connect(wsUrl, getApiKey(), clientId);

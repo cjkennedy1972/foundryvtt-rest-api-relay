@@ -11,7 +11,7 @@ import axios from 'axios';
 import { WsTestClient } from '../../helpers/wsClient';
 import { testVariables } from '../../helpers/testVariables';
 import { captureWsExample, saveWsExamples } from '../../helpers/captureWsExample';
-import { forEachVersion } from '../../helpers/multiVersion';
+import { forEachVersion, hasCachedClientId } from '../../helpers/multiVersion';
 import * as path from 'path';
 
 const capturedExamples: any[] = [];
@@ -28,6 +28,7 @@ describe('WebSocket API (/ws/api)', () => {
   });
 
   forEachVersion((version, getClientId) => {
+    const maybeTest = hasCachedClientId(version) ? test : test.skip;
     const clients: WsTestClient[] = [];
 
     function createClient(): WsTestClient {
@@ -77,12 +78,8 @@ describe('WebSocket API (/ws/api)', () => {
         }
       }, 3000);
 
-      test('should connect successfully with valid credentials', async () => {
+      maybeTest('should connect successfully with valid credentials', async () => {
         const clientId = getClientId();
-        if (!clientId) {
-          console.log('  Skipping: no clientId available');
-          return;
-        }
 
         const client = createClient();
         const connected = await client.connect(wsUrl, testVariables.apiKey, clientId);
@@ -102,9 +99,8 @@ describe('WebSocket API (/ws/api)', () => {
     // ═══════════════════════════════════════════
 
     describe(`Request/Response (v${version})`, () => {
-      test('should return error for unknown message type', async () => {
+      maybeTest('should return error for unknown message type', async () => {
         const clientId = getClientId();
-        if (!clientId) return;
 
         const client = createClient();
         await client.connect(wsUrl, testVariables.apiKey, clientId);
@@ -118,9 +114,8 @@ describe('WebSocket API (/ws/api)', () => {
         expect(response.error).toContain('Unknown message type');
       }, 3000);
 
-      test('should return error for missing requestId', async () => {
+      maybeTest('should return error for missing requestId', async () => {
         const clientId = getClientId();
-        if (!clientId) return;
 
         const client = createClient();
         await client.connect(wsUrl, testVariables.apiKey, clientId);
@@ -138,9 +133,8 @@ describe('WebSocket API (/ws/api)', () => {
         expect(error.type).toBe('error');
       }, 3000);
 
-      test('should return error for invalid JSON', async () => {
+      maybeTest('should return error for invalid JSON', async () => {
         const clientId = getClientId();
-        if (!clientId) return;
 
         const client = createClient();
         await client.connect(wsUrl, testVariables.apiKey, clientId);
@@ -159,9 +153,8 @@ describe('WebSocket API (/ws/api)', () => {
         expect(error.error).toBe('Invalid JSON');
       }, 3000);
 
-      test('should handle search request', async () => {
+      maybeTest('should handle search request', async () => {
         const clientId = getClientId();
-        if (!clientId) return;
 
         const client = createClient();
         await client.connect(wsUrl, testVariables.apiKey, clientId);
@@ -178,9 +171,8 @@ describe('WebSocket API (/ws/api)', () => {
         );
       }, 30000);
 
-      test('should handle ping/pong', async () => {
+      maybeTest('should handle ping/pong', async () => {
         const clientId = getClientId();
-        if (!clientId) return;
 
         const client = createClient();
         await client.connect(wsUrl, testVariables.apiKey, clientId);
@@ -195,9 +187,8 @@ describe('WebSocket API (/ws/api)', () => {
     // ═══════════════════════════════════════════
 
     describe(`Event Subscriptions (v${version})`, () => {
-      test('should subscribe to chat-events', async () => {
+      maybeTest('should subscribe to chat-events', async () => {
         const clientId = getClientId();
-        if (!clientId) return;
 
         const client = createClient();
         await client.connect(wsUrl, testVariables.apiKey, clientId);
@@ -207,9 +198,8 @@ describe('WebSocket API (/ws/api)', () => {
         expect(response.channel).toBe('chat-events');
       }, 3000);
 
-      test('should subscribe to roll-events', async () => {
+      maybeTest('should subscribe to roll-events', async () => {
         const clientId = getClientId();
-        if (!clientId) return;
 
         const client = createClient();
         await client.connect(wsUrl, testVariables.apiKey, clientId);
@@ -219,9 +209,8 @@ describe('WebSocket API (/ws/api)', () => {
         expect(response.channel).toBe('roll-events');
       }, 3000);
 
-      test('should reject subscribe to invalid channel', async () => {
+      maybeTest('should reject subscribe to invalid channel', async () => {
         const clientId = getClientId();
-        if (!clientId) return;
 
         const client = createClient();
         await client.connect(wsUrl, testVariables.apiKey, clientId);
@@ -235,9 +224,8 @@ describe('WebSocket API (/ws/api)', () => {
         expect(response.error).toContain('Invalid channel');
       }, 3000);
 
-      test('should unsubscribe from chat-events', async () => {
+      maybeTest('should unsubscribe from chat-events', async () => {
         const clientId = getClientId();
-        if (!clientId) return;
 
         const client = createClient();
         await client.connect(wsUrl, testVariables.apiKey, clientId);
@@ -248,9 +236,8 @@ describe('WebSocket API (/ws/api)', () => {
         expect(response.channel).toBe('chat-events');
       }, 3000);
 
-      test('should subscribe with filters', async () => {
+      maybeTest('should subscribe with filters', async () => {
         const clientId = getClientId();
-        if (!clientId) return;
 
         const client = createClient();
         await client.connect(wsUrl, testVariables.apiKey, clientId);
@@ -264,9 +251,8 @@ describe('WebSocket API (/ws/api)', () => {
         expect(response.channel).toBe('chat-events');
       }, 3000);
 
-      test('should receive chat-event after subscribing', async () => {
+      maybeTest('should receive chat-event after subscribing', async () => {
         const clientId = getClientId();
-        if (!clientId) return;
 
         const client = createClient();
         await client.connect(wsUrl, testVariables.apiKey, clientId);
@@ -310,9 +296,8 @@ describe('WebSocket API (/ws/api)', () => {
         }
       }, 15000);
 
-      test('should receive roll-event after subscribing', async () => {
+      maybeTest('should receive roll-event after subscribing', async () => {
         const clientId = getClientId();
-        if (!clientId) return;
 
         const client = createClient();
         await client.connect(wsUrl, testVariables.apiKey, clientId);
