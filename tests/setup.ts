@@ -19,6 +19,16 @@ beforeAll(async () => {
     await fetch(`${baseUrl}/health`, { signal: controller.signal });
     clearTimeout(timeout);
   } catch (error) {
+    // In CI's fast tier there's no live relay by design — every test gates
+    // itself on hasCachedClientId()/resolveClientId() and skips cleanly.
+    // Hard-failing this hook would fail those tests regardless of their own
+    // skip logic, since beforeAll runs even when every test in a file is
+    // .skip()'d. Warn instead; the live-E2E workflow (which does have a
+    // relay) still gets the loud failure below.
+    if (process.env.CI === 'true') {
+      console.warn(`Relay not reachable at ${baseUrl} — tests will skip via their own live-infra guards.`);
+      return;
+    }
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(
       `\n\nCould not connect to the relay server at ${baseUrl}\n` +
