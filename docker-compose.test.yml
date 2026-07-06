@@ -20,12 +20,17 @@ services:
     # FOUNDRY_VERSION is intentionally NOT set here — the image's baked version
     # drives the download, so there is no version-mismatch warning.
     image: threehats/quicksilvervtt-lite:${FOUNDRY_MAJOR:-13}
+    platform: linux/amd64
     environment:
       # foundryvtt.com account (for Foundry download) — NOT the world GM login.
       # The world GM login is "Gamemaster" (passwordless by default), used only by
       # the test process, so there is no collision with these download credentials.
       - FOUNDRY_USERNAME=${FOUNDRY_USERNAME}
       - FOUNDRY_PASSWORD=${FOUNDRY_PASSWORD}
+      # Timed presigned release URL (foundryvtt.com username/password download auth
+      # is broken behind CAPTCHA). When set, felddy downloads from here directly.
+      # Empty by default so the normal username/password flow is unaffected.
+      - FOUNDRY_RELEASE_URL=${FOUNDRY_RELEASE_URL:-}
       - FOUNDRY_ADMIN_KEY=testpassword
       - FOUNDRY_WORLD=test-world
     volumes:
@@ -46,6 +51,7 @@ services:
     build:
       context: .
       dockerfile: go-relay/Dockerfile
+    platform: linux/amd64
     environment:
       - DB_TYPE=sqlite
       - APP_ENV=development
