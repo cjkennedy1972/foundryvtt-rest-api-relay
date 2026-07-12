@@ -45,6 +45,7 @@ var (
 )
 
 func init() {
+	cacheDone = make(chan struct{})
 	go cacheCleanupLoop()
 }
 
