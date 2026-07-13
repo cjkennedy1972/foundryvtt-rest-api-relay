@@ -18,6 +18,7 @@ import (
 	"github.com/ThreeHats/foundryvtt-rest-api-relay/go-relay/internal/database"
 	"github.com/ThreeHats/foundryvtt-rest-api-relay/go-relay/internal/handler/helpers"
 	"github.com/ThreeHats/foundryvtt-rest-api-relay/go-relay/internal/model"
+	"github.com/ThreeHats/foundryvtt-rest-api-relay/go-relay/internal/service"
 	"github.com/ThreeHats/foundryvtt-rest-api-relay/go-relay/internal/worker"
 	"github.com/ThreeHats/foundryvtt-rest-api-relay/go-relay/internal/ws"
 	"github.com/rs/zerolog/log"
@@ -32,6 +33,7 @@ type PendingHandshake struct {
 	Username     string
 	WorldName    string
 	APIKey       string
+	CredentialID int64
 	InstanceID   string
 	ExpiresAt    time.Time
 }
@@ -70,8 +72,26 @@ func sessionHandshakeHandler(db *database.DB, cfg *config.Config) http.HandlerFu
 		username := r.Header.Get("x-username")
 		worldName := r.Header.Get("x-world-name")
 
+		var credentialID int64
+		if foundryURL == "" && username == "" && db != nil {
+			user, _ := db.UserStore().FindByAPIKeyHash(r.Context(), reqCtx.MasterAPIKey)
+			if user != nil {
+				credentials, err := db.CredentialStore().FindAllByUser(r.Context(), user.ID)
+				if err != nil {
+					helpers.WriteError(w, http.StatusInternalServerError, "Failed to load stored Foundry credentials")
+					return
+				}
+				if len(credentials) != 1 {
+					helpers.WriteError(w, http.StatusBadRequest, "Exactly one stored Foundry credential is required for automatic startup")
+					return
+				}
+				credentialID = credentials[0].ID
+				foundryURL = credentials[0].FoundryURL
+				username = credentials[0].FoundryUsername
+			}
+		}
 		if foundryURL == "" || username == "" {
-			helpers.WriteError(w, http.StatusBadRequest, "x-foundry-url and x-username headers are required")
+			helpers.WriteError(w, http.StatusBadRequest, "No stored Foundry credential is configured")
 			return
 		}
 
@@ -101,7 +121,8 @@ func sessionHandshakeHandler(db *database.DB, cfg *config.Config) http.HandlerFu
 		hs := &PendingHandshake{
 			PrivateKey: privateKey, PublicKeyPEM: publicKeyPEM, Nonce: nonce,
 			FoundryURL: foundryURL, Username: username, WorldName: worldName,
-			APIKey: reqCtx.MasterAPIKey, InstanceID: cfg.InstanceID(),
+			CredentialID: credentialID,
+			APIKey:       reqCtx.MasterAPIKey, InstanceID: cfg.InstanceID(),
 			ExpiresAt: time.Now().Add(5 * time.Minute),
 		}
 
@@ -137,8 +158,8 @@ func sessionStartHandler(db *database.DB, cfg *config.Config, headless *worker.H
 		handshakeToken := bodyStr(body, "handshakeToken")
 		encryptedPassword := bodyStr(body, "encryptedPassword")
 
-		if handshakeToken == "" || encryptedPassword == "" {
-			helpers.WriteError(w, http.StatusBadRequest, "handshakeToken and encryptedPassword are required")
+		if handshakeToken == "" {
+			helpers.WriteError(w, http.StatusBadRequest, "handshakeToken is required")
 			return
 		}
 
@@ -154,32 +175,46 @@ func sessionStartHandler(db *database.DB, cfg *config.Config, headless *worker.H
 			return
 		}
 
-		// Decrypt password using RSA private key
-		encBytes, err := base64.StdEncoding.DecodeString(encryptedPassword)
-		if err != nil {
-			helpers.WriteError(w, http.StatusBadRequest, "Invalid encrypted password encoding")
-			return
-		}
-
-		decrypted, err := rsa.DecryptOAEP(sha256.New(), cryptorand.Reader, hs.PrivateKey, encBytes, nil)
-		if err != nil {
-			helpers.WriteError(w, http.StatusBadRequest, "Failed to decrypt password")
-			return
-		}
-
-		// Parse decrypted JSON: { "password": "...", "nonce": "..." }
-		var creds struct {
-			Password string `json:"password"`
-			Nonce    string `json:"nonce"`
-		}
-		if err := json.Unmarshal(decrypted, &creds); err != nil {
-			helpers.WriteError(w, http.StatusBadRequest, "Invalid decrypted credential format")
-			return
-		}
-
-		// Verify nonce
-		if creds.Nonce != hs.Nonce {
-			helpers.WriteError(w, http.StatusUnauthorized, "Nonce mismatch")
+		password := ""
+		if encryptedPassword != "" {
+			// Legacy encrypted-password clients are still accepted during migration.
+			encBytes, err := base64.StdEncoding.DecodeString(encryptedPassword)
+			if err != nil {
+				helpers.WriteError(w, http.StatusBadRequest, "Invalid encrypted password encoding")
+				return
+			}
+			decrypted, err := rsa.DecryptOAEP(sha256.New(), cryptorand.Reader, hs.PrivateKey, encBytes, nil)
+			if err != nil {
+				helpers.WriteError(w, http.StatusBadRequest, "Failed to decrypt password")
+				return
+			}
+			var creds struct {
+				Password string `json:"password"`
+				Nonce    string `json:"nonce"`
+			}
+			if err := json.Unmarshal(decrypted, &creds); err != nil {
+				helpers.WriteError(w, http.StatusBadRequest, "Invalid decrypted credential format")
+				return
+			}
+			if creds.Nonce != hs.Nonce {
+				helpers.WriteError(w, http.StatusUnauthorized, "Nonce mismatch")
+				return
+			}
+			password = creds.Password
+		} else if hs.CredentialID != 0 && db != nil {
+			user, _ := db.UserStore().FindByAPIKeyHash(r.Context(), hs.APIKey)
+			credential, err := db.CredentialStore().FindByID(r.Context(), hs.CredentialID)
+			if user == nil || credential == nil || credential.UserID != user.ID {
+				helpers.WriteError(w, http.StatusUnauthorized, "Stored Foundry credential is unavailable")
+				return
+			}
+			password, err = service.Decrypt(credential.EncryptedFoundryPassword, credential.PasswordIV, credential.PasswordAuthTag, cfg.CredentialsEncryptionKey)
+			if err != nil {
+				helpers.WriteError(w, http.StatusInternalServerError, "Failed to decrypt stored Foundry credential")
+				return
+			}
+		} else {
+			helpers.WriteError(w, http.StatusBadRequest, "encryptedPassword is required for this handshake")
 			return
 		}
 
@@ -221,7 +256,7 @@ func sessionStartHandler(db *database.DB, cfg *config.Config, headless *worker.H
 		}
 
 		// Launch headless session (this blocks until client connects or timeout)
-		sessionID, clientID, err := headless.LaunchSession(hs.APIKey, hs.FoundryURL, hs.Username, creds.Password, worldName, rawToken)
+		sessionID, clientID, err := headless.LaunchSession(hs.APIKey, hs.FoundryURL, hs.Username, password, worldName, rawToken)
 		if err != nil {
 			log.Error().Err(err).Msg("Headless session launch failed")
 			helpers.WriteJSON(w, http.StatusRequestTimeout, map[string]interface{}{
