@@ -754,7 +754,7 @@ func injectConnectionTokenSeed(tabCtx context.Context, rawToken string) error {
 // LaunchSession launches a headless Foundry session. If seedToken is non-empty,
 // the connection token is injected into localStorage before navigation so the
 // Foundry module can connect without a manual pairing flow.
-func (m *HeadlessManager) LaunchSession(apiKey, foundryURL, username, password, worldName, seedToken string) (sessionID, clientID string, err error) {
+func (m *HeadlessManager) LaunchSession(apiKey, foundryURL, username, password, adminPassword, worldName, seedToken string) (sessionID, clientID string, err error) {
 	// Clean up stale sessions
 	m.mu.Lock()
 	for id, s := range m.sessions {
@@ -835,6 +835,16 @@ func (m *HeadlessManager) LaunchSession(apiKey, foundryURL, username, password, 
 	chromedp.Run(tabCtx, chromedp.Evaluate(`
 		document.querySelectorAll('.notification .close, .notification a.close, #notifications .notification .close, .notification-pip, .notification .notification-close').forEach(el => el.click());
 	`, nil))
+
+	// Foundry's administrator gate must be passed before the world list exists.
+	// It is intentionally separate from the world GM login: the administrator
+	// password is stored in the relay credential vault and never leaves the relay.
+	if detectPage(tabCtx) == "admin" {
+		if err := loginToFoundryAdmin(tabCtx, adminPassword); err != nil {
+			tabCancel()
+			return "", "", fmt.Errorf("administrator login failed: %w", err)
+		}
+	}
 
 	// World selection — only if we're on the world list page, not the login page
 	if worldName != "" {
@@ -1680,6 +1690,8 @@ func detectPage(ctx context.Context) string {
 			var result string
 			err := chromedp.Run(checkCtx, chromedp.Evaluate(`
 				(function() {
+					if (document.querySelector('select[name="userid"]')) return 'login';
+					if (document.querySelector('form[action="/auth"], #setup-auth, input[name="adminPassword"]')) return 'admin';
 					if (document.querySelector('input[name="password"]')) return 'login';
 					if (document.querySelector('li.package.world')) return 'worldList';
 					if (document.querySelector('#ui-left, #sidebar, #game')) return 'game';
@@ -1691,6 +1703,32 @@ func detectPage(ctx context.Context) string {
 			}
 		}
 	}
+}
+
+// loginToFoundryAdmin submits Foundry's server administrator gate. Foundry's
+// setup UI has changed markup across releases, so use its stable /auth action
+// rather than depending on a particular button or CSS layout.
+func loginToFoundryAdmin(ctx context.Context, password string) error {
+	loginCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	js := fmt.Sprintf(`
+			(async function() {
+				const resp = await fetch('/auth', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({action:'auth', password:%q})});
+				if (!resp.ok) return 'fail:' + (await resp.text()).substring(0,120);
+				let data = {}; try { data = await resp.json(); } catch(e) {}
+				if (data.status && data.status !== 'success') return 'fail:' + (data.message || 'administrator authentication rejected');
+				window.location.reload(); return 'ok';
+			})()
+		`, password)
+	var result string
+	if err := chromedp.Run(loginCtx, chromedp.Evaluate(js, &result)); err != nil {
+		return err
+	}
+	if !strings.HasPrefix(result, "ok") {
+		return fmt.Errorf("%s", result)
+	}
+	time.Sleep(2 * time.Second)
+	return nil
 }
 
 func selectWorld(ctx context.Context, worldName string) error {

@@ -204,6 +204,7 @@ func sessionStartHandler(db *database.DB, cfg *config.Config, headless *worker.H
 		}
 
 		password := ""
+		adminPassword := ""
 		if encryptedPassword != "" {
 			// Legacy encrypted-password clients are still accepted during migration.
 			encBytes, err := base64.StdEncoding.DecodeString(encryptedPassword)
@@ -239,6 +240,15 @@ func sessionStartHandler(db *database.DB, cfg *config.Config, headless *worker.H
 			password, err = service.Decrypt(credential.EncryptedFoundryPassword, credential.PasswordIV, credential.PasswordAuthTag, cfg.CredentialsEncryptionKey)
 			if err != nil {
 				helpers.WriteError(w, http.StatusInternalServerError, "Failed to decrypt stored Foundry credential")
+				return
+			}
+			if credential.EncryptedAdminPassword == "" {
+				helpers.WriteError(w, http.StatusBadRequest, "Stored Foundry administrator password is not configured")
+				return
+			}
+			adminPassword, err = service.Decrypt(credential.EncryptedAdminPassword, credential.AdminPasswordIV, credential.AdminPasswordAuthTag, cfg.CredentialsEncryptionKey)
+			if err != nil {
+				helpers.WriteError(w, http.StatusInternalServerError, "Failed to decrypt stored Foundry administrator credential")
 				return
 			}
 		} else {
@@ -284,7 +294,7 @@ func sessionStartHandler(db *database.DB, cfg *config.Config, headless *worker.H
 		}
 
 		// Launch headless session (this blocks until client connects or timeout)
-		sessionID, clientID, err := headless.LaunchSession(hs.APIKey, hs.FoundryURL, hs.Username, password, worldName, rawToken)
+		sessionID, clientID, err := headless.LaunchSession(hs.APIKey, hs.FoundryURL, hs.Username, password, adminPassword, worldName, rawToken)
 		if err != nil {
 			log.Error().Err(err).Msg("Headless session launch failed")
 			helpers.WriteJSON(w, http.StatusRequestTimeout, map[string]interface{}{

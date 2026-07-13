@@ -14,6 +14,7 @@
   let foundryUsername = $state('');
   let foundryPassword = $state('');
   let world = $state('');
+  let foundryAdminPassword = $state('');
   let saving = $state(false);
   let message = $state('');
   let messageType = $state<'success' | 'error'>('error');
@@ -40,6 +41,7 @@
     foundryUsername = '';
     foundryPassword = '';
     world = '';
+    foundryAdminPassword = '';
     showForm = true;
     message = '';
   }
@@ -51,6 +53,7 @@
     foundryUsername = cred.foundryUsername;
     foundryPassword = '';
     world = cred.world ?? '';
+    foundryAdminPassword = '';
     showForm = true;
     message = '';
   }
@@ -75,6 +78,10 @@
       messageType = 'error';
       return;
     }
+    if (!editing && !foundryAdminPassword) {
+      error = 'Foundry administrator password is required when creating a credential';
+      return;
+    }
 
     saving = true;
     message = '';
@@ -87,6 +94,7 @@
         foundryUsername: foundryUsername.trim(),
         foundryPassword,
         world: world.trim(),
+        foundryAdminPassword,
       };
       result = await updateCredential(editingCredential!.id, body);
     } else {
@@ -96,6 +104,7 @@
         foundryUsername: foundryUsername.trim(),
         foundryPassword,
         world: world.trim(),
+        foundryAdminPassword,
       });
     }
 
@@ -173,6 +182,8 @@
           <div class="form-group">
             <label class="form-label" for="cred-pass">Password *</label>
             <input class="form-input" type="password" id="cred-pass" bind:value={foundryPassword} placeholder="Encrypted at rest" required />
+            <label for="cred-admin-pass">Foundry Administrator Password</label>
+            <input class="form-input" type="password" id="cred-admin-pass" bind:value={foundryAdminPassword} placeholder={editing ? 'Leave blank to keep current' : 'Encrypted at rest'} required={!editing} />
           </div>
         </div>
 
