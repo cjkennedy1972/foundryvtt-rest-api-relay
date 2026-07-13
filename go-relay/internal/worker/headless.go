@@ -1705,7 +1705,7 @@ func detectPage(ctx context.Context) string {
 			err := chromedp.Run(checkCtx, chromedp.Evaluate(`
 				(function() {
 					if (document.querySelector('select[name="userid"]')) return 'login';
-					if (document.querySelector('form[action="/auth"], #setup-auth, input[name="adminPassword"]')) return 'admin';
+					if (document.querySelector('form[action="/auth"], form#setup-auth, form#setup-authentication')) return 'admin';
 					if (document.querySelector('input[name="password"]')) return 'login';
 					if (document.querySelector('li.package.world')) return 'worldList';
 					if (document.querySelector('#ui-left, #sidebar, #game')) return 'game';
