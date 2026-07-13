@@ -1720,26 +1720,29 @@ func detectPage(ctx context.Context) string {
 }
 
 // loginToFoundryAdmin submits Foundry's server administrator gate. Foundry's
-// setup UI has changed markup across releases, so use its stable /auth action
-// rather than depending on a particular button or CSS layout.
+// setup UI has changed markup across releases. Submit the rendered form so the
+// browser sends the same fields and cookies as a human administrator login.
 func loginToFoundryAdmin(ctx context.Context, password string) error {
 	loginCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	js := fmt.Sprintf(`
-			(async function() {
-				const resp = await fetch('/auth', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({adminPassword:%q})});
-				if (!resp.ok) return JSON.stringify({error: (await resp.text()).substring(0,120)});
-				let data = {}; try { data = await resp.json(); } catch(e) {}
-				if (data.status && data.status !== 'success') return JSON.stringify({error: data.message || 'administrator authentication rejected'});
-				setTimeout(function() { window.location.reload(); }, 0); return JSON.stringify({ok:true});
+			(function() {
+				const input = document.querySelector('input[name="adminPassword"], input[name="password"]');
+				if (!input) return false;
+				input.value = %q;
+				input.dispatchEvent(new Event('input', {bubbles:true}));
+				const form = input.form || input.closest('form');
+				if (!form) return false;
+				if (form.requestSubmit) form.requestSubmit(); else form.submit();
+				return true;
 			})()
 		`, password)
-	var result string
+	var result bool
 	if err := chromedp.Run(loginCtx, chromedp.Evaluate(js, &result)); err != nil {
 		return err
 	}
-	if !strings.HasPrefix(result, "ok") {
-		return fmt.Errorf("%s", result)
+	if !result {
+		return fmt.Errorf("administrator login form not found")
 	}
 	time.Sleep(2 * time.Second)
 	return nil
