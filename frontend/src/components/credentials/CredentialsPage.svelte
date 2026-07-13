@@ -79,7 +79,7 @@
       return;
     }
     if (!editing && !foundryAdminPassword) {
-      error = 'Foundry administrator password is required when creating a credential';
+      message = 'Foundry administrator password is required when creating a credential';
       return;
     }
 
