@@ -872,22 +872,27 @@ func RegisterCredentialRoutes(r chi.Router, db *database.DB, cfg *config.Config,
 				cred.World = strings.TrimSpace(world)
 			}
 			pw, hasPw := body["foundryPassword"].(string)
+			// Existing credentials can be upgraded with the administrator password
+			// alone. The encrypted world password is intentionally not returned by
+			// GET, so requiring it again would make migration impossible without
+			// retrieving or exposing the stored secret.
 			if !hasPw || pw == "" {
-				helpers.WriteError(w, http.StatusBadRequest, "Password is required when updating a credential.")
-				return
+				pw = ""
 			}
 			if !service.IsEncryptionAvailable(cfg.CredentialsEncryptionKey) {
 				helpers.WriteError(w, http.StatusBadRequest, "Credential storage is not available.")
 				return
 			}
-			encrypted, err := service.Encrypt(pw, cfg.CredentialsEncryptionKey)
-			if err != nil {
-				helpers.WriteError(w, http.StatusInternalServerError, "Failed to encrypt credentials")
-				return
+			if pw != "" {
+				encrypted, err := service.Encrypt(pw, cfg.CredentialsEncryptionKey)
+				if err != nil {
+					helpers.WriteError(w, http.StatusInternalServerError, "Failed to encrypt credentials")
+					return
+				}
+				cred.EncryptedFoundryPassword = encrypted.Ciphertext
+				cred.PasswordIV = encrypted.IV
+				cred.PasswordAuthTag = encrypted.AuthTag
 			}
-			cred.EncryptedFoundryPassword = encrypted.Ciphertext
-			cred.PasswordIV = encrypted.IV
-			cred.PasswordAuthTag = encrypted.AuthTag
 			if adminPw, ok := body["foundryAdminPassword"].(string); ok && adminPw != "" {
 				adminEncrypted, encErr := service.Encrypt(adminPw, cfg.CredentialsEncryptionKey)
 				if encErr != nil {
@@ -897,6 +902,10 @@ func RegisterCredentialRoutes(r chi.Router, db *database.DB, cfg *config.Config,
 				cred.EncryptedAdminPassword = adminEncrypted.Ciphertext
 				cred.AdminPasswordIV = adminEncrypted.IV
 				cred.AdminPasswordAuthTag = adminEncrypted.AuthTag
+			}
+			if pw == "" && cred.EncryptedAdminPassword == "" {
+				helpers.WriteError(w, http.StatusBadRequest, "foundryPassword or foundryAdminPassword is required when updating a credential")
+				return
 			}
 
 			if err := db.CredentialStore().Update(ctx, cred); err != nil {
