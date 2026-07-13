@@ -697,14 +697,25 @@ func (m *HeadlessManager) createIsolatedTab() (ctx context.Context, cancel conte
 
 	// Create isolated browser context via browser-level connection
 	bcID, err := target.CreateBrowserContext().WithDisposeOnDetach(true).Do(browserExec)
+	isolated := err == nil
 	if err != nil {
-		return nil, nil, fmt.Errorf("create browser context: %w", err)
+		// Some macOS Chrome builds expose Target.createBrowserContext but
+		// cancel the command for headless SwiftShader sessions. A dedicated tab
+		// still provides a usable single-GM session and is preferable to making
+		// startup impossible. Keep the fallback explicit in the logs.
+		log.Warn().Err(err).Msg("Chrome isolated context unavailable; using dedicated headless tab")
 	}
 
 	// Create target using minimal params (Chrome 146 compat)
-	tid, err := (&minCreateTarget{URL: "about:blank", BCI: bcID}).Do(browserExec)
+	create := &minCreateTarget{URL: "about:blank"}
+	if isolated {
+		create.BCI = bcID
+	}
+	tid, err := create.Do(browserExec)
 	if err != nil {
-		target.DisposeBrowserContext(bcID).Do(browserExec)
+		if isolated {
+			target.DisposeBrowserContext(bcID).Do(browserExec)
+		}
 		return nil, nil, fmt.Errorf("create target: %w", err)
 	}
 
@@ -714,7 +725,9 @@ func (m *HeadlessManager) createIsolatedTab() (ctx context.Context, cancel conte
 	// Wrap cancel to also dispose the browser context
 	combinedCancel := func() {
 		tabCancel()
-		target.DisposeBrowserContext(bcID).Do(browserExec)
+		if isolated {
+			target.DisposeBrowserContext(bcID).Do(browserExec)
+		}
 	}
 
 	return tabCtx, combinedCancel, nil
