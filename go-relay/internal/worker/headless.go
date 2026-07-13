@@ -672,6 +672,25 @@ func (m *HeadlessManager) newIsolatedTab() (ctx context.Context, cancel context.
 	if err := m.ensureBrowser(); err != nil {
 		return nil, nil, err
 	}
+	ctx, cancel, err = m.createIsolatedTab()
+	if err == nil {
+		return ctx, cancel, nil
+	}
+	// Chrome can retain a live-looking but canceled CDP root context after a
+	// crash, profile lock race, or allocator restart. Recreate the shared
+	// browser once instead of returning a failure that triggers a restart loop.
+	log.Warn().Err(err).Msg("Shared Chrome context is stale; recreating browser")
+	m.resetBrowser()
+	if err := m.ensureBrowser(); err != nil {
+		return nil, nil, fmt.Errorf("restart browser: %w", err)
+	}
+	return m.createIsolatedTab()
+}
+
+func (m *HeadlessManager) createIsolatedTab() (ctx context.Context, cancel context.CancelFunc, err error) {
+	if m.browserCtx == nil || m.browserCtx.Err() != nil {
+		return nil, nil, fmt.Errorf("shared browser context canceled")
+	}
 
 	c := chromedp.FromContext(m.browserCtx)
 	browserExec := cdp.WithExecutor(m.browserCtx, c.Browser)
@@ -699,6 +718,21 @@ func (m *HeadlessManager) newIsolatedTab() (ctx context.Context, cancel context.
 	}
 
 	return tabCtx, combinedCancel, nil
+}
+
+func (m *HeadlessManager) resetBrowser() {
+	m.browserMu.Lock()
+	defer m.browserMu.Unlock()
+	if m.browserCancel != nil {
+		m.browserCancel()
+	}
+	if m.allocCancel != nil {
+		m.allocCancel()
+	}
+	m.browserCtx = nil
+	m.browserCancel = nil
+	m.allocCancel = nil
+	m.browserReady = false
 }
 
 // OnClientDisconnected cleans up any headless session associated with the disconnected client.
