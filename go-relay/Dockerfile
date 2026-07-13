@@ -18,7 +18,7 @@ COPY go-relay/ .
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /relay ./cmd/server/
 
 # Frontend build stage (Astro)
-FROM node:22-alpine AS frontend
+FROM node:24-alpine AS frontend
 
 WORKDIR /frontend
 # Install deps before copying content so this layer is cached on content-only changes
@@ -30,7 +30,7 @@ COPY frontend/ .
 RUN pnpm run build
 
 # Docs build stage (Docusaurus)
-FROM node:22-alpine AS docs
+FROM node:24-alpine AS docs
 
 ARG ALGOLIA_APP_ID
 ARG ALGOLIA_SEARCH_API_KEY
@@ -69,7 +69,7 @@ FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install Node.js 22 (NodeSource) and Google Chrome.
+# Install Node.js 24 (NodeSource) and Google Chrome.
 # Google Chrome is used over Chromium for better GPU driver integration.
 # gosu: lightweight privilege-drop (replaces Alpine's su-exec).
 # libvulkan1 + mesa-vulkan-drivers: Vulkan ICD (llvmpipe) for headless WebGL fallback.
@@ -77,7 +77,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # libgl1-mesa-dri + libegl-mesa0: Mesa OpenGL/EGL for non-NVIDIA GL rendering via Xvfb.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl gnupg \
-    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
     && curl -fsSL https://dl.google.com/linux/linux_signing_key.pub \
        | gpg --dearmor -o /usr/share/keyrings/google-chrome-keyring.gpg \
     && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome-keyring.gpg] http://dl.google.com/linux/chrome/deb/ stable main" \

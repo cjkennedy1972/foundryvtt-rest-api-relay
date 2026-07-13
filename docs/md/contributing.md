@@ -40,7 +40,7 @@ The Foundry module is a TypeScript module that:
 ### Prerequisites
 
 - **Go 1.22+** for the relay server
-- **Node.js 18+** and **pnpm** for frontend, docs, and tests
+- **Node.js 24+** and **pnpm** for frontend, docs, and tests
 - **Foundry VTT** with a valid license
 - **Git** for version control
 

@@ -3,6 +3,7 @@
   "version": "3.4.1",
   "description": "Message relay server for the foundryvtt-rest-api Foundry Module",
   "private": true,
+  "engines": { "node": ">=24.0.0" },
   "scripts": {
     "local": "cd go-relay && DB_TYPE=sqlite PORT=3010 PER_MINUTE_REQUEST_LIMIT=0 go run ./cmd/server/",
     "local:sqlite": "cd go-relay && DB_TYPE=sqlite PORT=3010 PER_MINUTE_REQUEST_LIMIT=0 go run ./cmd/server/",
