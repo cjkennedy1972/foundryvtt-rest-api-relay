@@ -11,6 +11,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"net/http"
+	"sort"
 	"sync"
 	"time"
 
@@ -81,13 +82,40 @@ func sessionHandshakeHandler(db *database.DB, cfg *config.Config) http.HandlerFu
 					helpers.WriteError(w, http.StatusInternalServerError, "Failed to load stored Foundry credentials")
 					return
 				}
-				if len(credentials) != 1 {
-					helpers.WriteError(w, http.StatusBadRequest, "Exactly one stored Foundry credential is required for automatic startup")
-					return
+				// Select the credential attached to the most recently seen known
+				// world. This supports multiple relay-managed worlds without
+				// copying account details into the AI engine.
+				knownClients, _ := db.KnownClientStore().FindAllByUser(r.Context(), user.ID)
+				sort.SliceStable(knownClients, func(i, j int) bool {
+					if knownClients[i].LastSeenAt == nil || !knownClients[i].LastSeenAt.Valid {
+						return false
+					}
+					if knownClients[j].LastSeenAt == nil || !knownClients[j].LastSeenAt.Valid {
+						return true
+					}
+					return knownClients[i].LastSeenAt.Time.After(knownClients[j].LastSeenAt.Time)
+				})
+				for _, known := range knownClients {
+					if !known.CredentialID.Valid {
+						continue
+					}
+					for _, credential := range credentials {
+						if credential.ID == known.CredentialID.Int64 {
+							credentialID = credential.ID
+							foundryURL = credential.FoundryURL
+							username = credential.FoundryUsername
+							break
+						}
+					}
+					if credentialID != 0 {
+						break
+					}
 				}
-				credentialID = credentials[0].ID
-				foundryURL = credentials[0].FoundryURL
-				username = credentials[0].FoundryUsername
+				if credentialID == 0 && len(credentials) == 1 {
+					credentialID = credentials[0].ID
+					foundryURL = credentials[0].FoundryURL
+					username = credentials[0].FoundryUsername
+				}
 			}
 		}
 		if foundryURL == "" || username == "" {
