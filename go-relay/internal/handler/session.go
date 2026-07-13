@@ -260,6 +260,8 @@ func sessionStartHandler(db *database.DB, cfg *config.Config, headless *worker.H
 		if wn := bodyStr(body, "worldName"); wn != "" {
 			worldName = wn
 		}
+		createWorldName := bodyStr(body, "createWorldName")
+		createWorldSystem := bodyStr(body, "createWorldSystem")
 
 		if headless == nil {
 			helpers.WriteJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
@@ -294,7 +296,7 @@ func sessionStartHandler(db *database.DB, cfg *config.Config, headless *worker.H
 		}
 
 		// Launch headless session (this blocks until client connects or timeout)
-		sessionID, clientID, err := headless.LaunchSession(hs.APIKey, hs.FoundryURL, hs.Username, password, adminPassword, worldName, rawToken)
+		sessionID, clientID, err := headless.LaunchSession(hs.APIKey, hs.FoundryURL, hs.Username, password, adminPassword, worldName, rawToken, createWorldName, createWorldSystem)
 		if err != nil {
 			log.Error().Err(err).Msg("Headless session launch failed")
 			helpers.WriteJSON(w, http.StatusRequestTimeout, map[string]interface{}{

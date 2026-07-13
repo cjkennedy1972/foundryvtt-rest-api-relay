@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	goruntime "runtime"
 	"strings"
 	"sync"
@@ -754,7 +755,7 @@ func injectConnectionTokenSeed(tabCtx context.Context, rawToken string) error {
 // LaunchSession launches a headless Foundry session. If seedToken is non-empty,
 // the connection token is injected into localStorage before navigation so the
 // Foundry module can connect without a manual pairing flow.
-func (m *HeadlessManager) LaunchSession(apiKey, foundryURL, username, password, adminPassword, worldName, seedToken string) (sessionID, clientID string, err error) {
+func (m *HeadlessManager) LaunchSession(apiKey, foundryURL, username, password, adminPassword, worldName, seedToken, createWorldName, createWorldSystem string) (sessionID, clientID string, err error) {
 	// Clean up stale sessions
 	m.mu.Lock()
 	for id, s := range m.sessions {
@@ -843,6 +844,19 @@ func (m *HeadlessManager) LaunchSession(apiKey, foundryURL, username, password, 
 		if err := loginToFoundryAdmin(tabCtx, adminPassword); err != nil {
 			tabCancel()
 			return "", "", fmt.Errorf("administrator login failed: %w", err)
+		}
+	}
+	if createWorldName != "" {
+		if pageType := detectPage(tabCtx); pageType == "worldList" {
+			if err := createWorld(tabCtx, createWorldName, createWorldSystem); err != nil {
+				tabCancel()
+				return "", "", fmt.Errorf("world creation failed: %w", err)
+			}
+			// World creation returns to setup; re-load the list before selecting.
+			if err := chromedp.Run(tabCtx, chromedp.Navigate(foundryURL)); err != nil {
+				tabCancel()
+				return "", "", fmt.Errorf("reload world list after creation: %w", err)
+			}
 		}
 	}
 
@@ -1763,6 +1777,43 @@ func selectWorld(ctx context.Context, worldName string) error {
 		return fmt.Errorf("world %q not found", worldName)
 	}
 	time.Sleep(2 * time.Second)
+	return nil
+}
+
+// createWorld uses Foundry's authenticated setup action. It is deliberately
+// performed in the administrator-authenticated browser context so no admin
+// password or setup cookie crosses the relay boundary.
+func createWorld(ctx context.Context, title, systemID string) error {
+	if systemID == "" {
+		return fmt.Errorf("createWorldSystem is required when creating a world")
+	}
+	id := strings.ToLower(strings.TrimSpace(title))
+	id = regexp.MustCompile(`[^a-z0-9]+`).ReplaceAllString(id, "-")
+	id = strings.Trim(id, "-")
+	if id == "" {
+		return fmt.Errorf("world title does not produce a valid world id")
+	}
+	js := fmt.Sprintf(`
+		(async function() {
+			const response = await fetch('/create', {
+				method: 'POST', headers: {'Content-Type': 'application/json'},
+				body: JSON.stringify({action:'createWorld', title:%q, id:%q, system:%q, launch:false})
+			});
+			const text = await response.text();
+			if (!response.ok) return 'fail:' + text.substring(0, 240);
+			try { const data = JSON.parse(text); if (data.error) return 'fail:' + data.error; } catch(e) {}
+			return 'ok';
+		})()
+	`, title, id, systemID)
+	var result string
+	createCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if err := chromedp.Run(createCtx, chromedp.Evaluate(js, &result)); err != nil {
+		return err
+	}
+	if !strings.HasPrefix(result, "ok") {
+		return fmt.Errorf("%s", result)
+	}
 	return nil
 }
 
