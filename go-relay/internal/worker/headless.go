@@ -1725,9 +1725,12 @@ func detectPage(ctx context.Context) string {
 func loginToFoundryAdmin(ctx context.Context, password string) error {
 	loginCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
+	if err := waitForAnySelector(loginCtx, []string{`input[name="adminPassword"]`, `input[name="password"]`, `input[type="password"]`}); err != nil {
+		return fmt.Errorf("login form not found: %w", err)
+	}
 	js := fmt.Sprintf(`
 			(function() {
-				const input = document.querySelector('input[name="adminPassword"], input[name="password"]');
+				const input = document.querySelector('input[name="adminPassword"], input[name="password"], input[type="password"]');
 				if (!input) return false;
 				input.value = %q;
 				input.dispatchEvent(new Event('input', {bubbles:true}));
