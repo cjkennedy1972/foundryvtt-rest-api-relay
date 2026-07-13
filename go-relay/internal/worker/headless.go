@@ -1727,11 +1727,11 @@ func loginToFoundryAdmin(ctx context.Context, password string) error {
 	defer cancel()
 	js := fmt.Sprintf(`
 			(async function() {
-				const resp = await fetch('/auth', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({action:'auth', password:%q})});
-				if (!resp.ok) return 'fail:' + (await resp.text()).substring(0,120);
+				const resp = await fetch('/auth', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({adminPassword:%q})});
+				if (!resp.ok) return JSON.stringify({error: (await resp.text()).substring(0,120)});
 				let data = {}; try { data = await resp.json(); } catch(e) {}
-				if (data.status && data.status !== 'success') return 'fail:' + (data.message || 'administrator authentication rejected');
-				window.location.reload(); return 'ok';
+				if (data.status && data.status !== 'success') return JSON.stringify({error: data.message || 'administrator authentication rejected'});
+				setTimeout(function() { window.location.reload(); }, 0); return JSON.stringify({ok:true});
 			})()
 		`, password)
 	var result string
