@@ -209,6 +209,7 @@ type HeadlessDeps struct {
 // HeadlessManager manages a shared Chrome browser with isolated contexts per session.
 type HeadlessManager struct {
 	mu              sync.RWMutex
+	browserMu       sync.Mutex
 	sessions        map[string]*HeadlessSession // sessionID -> session
 	pending         map[string]*PendingHeadless // sessionID -> pending
 	clientManager   *ws.ClientManager
@@ -482,6 +483,8 @@ func resolveRenderMode(configured string) string {
 // ensureBrowser starts the shared browser, selecting the best available render
 // mode and falling back to SwiftShader if the primary mode fails.
 func (m *HeadlessManager) ensureBrowser() error {
+	m.browserMu.Lock()
+	defer m.browserMu.Unlock()
 	if m.browserReady {
 		return nil
 	}
