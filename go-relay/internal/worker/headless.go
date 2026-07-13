@@ -1775,27 +1775,20 @@ func detectPage(ctx context.Context) string {
 func loginToFoundryAdmin(ctx context.Context, password string) error {
 	loginCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	if err := waitForAnySelector(loginCtx, []string{`input[name="adminPassword"]`, `input[name="password"]`, `input[type="password"]`}); err != nil {
-		return fmt.Errorf("login form not found: %w", err)
-	}
 	js := fmt.Sprintf(`
-			(function() {
-				const input = document.querySelector('input[name="adminPassword"], input[name="password"], input[type="password"]');
-				if (!input) return false;
-				input.value = %q;
-				input.dispatchEvent(new Event('input', {bubbles:true}));
-				const form = input.form || input.closest('form');
-				if (!form) return false;
-				if (form.requestSubmit) form.requestSubmit(); else form.submit();
-				return true;
+			(async function() {
+				const resp = await fetch('/auth', {method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body:JSON.stringify({adminPassword:%q})});
+				return resp.status >= 200 && resp.status < 400;
 			})()
 		`, password)
 	var result bool
-	if err := chromedp.Run(loginCtx, chromedp.Evaluate(js, &result)); err != nil {
+	if err := chromedp.Run(loginCtx, chromedp.Evaluate(js, &result, func(p *runtime.EvaluateParams) *runtime.EvaluateParams {
+		return p.WithAwaitPromise(true)
+	})); err != nil {
 		return err
 	}
 	if !result {
-		return fmt.Errorf("administrator login form not found")
+		return fmt.Errorf("administrator authentication rejected")
 	}
 	time.Sleep(2 * time.Second)
 	return nil
