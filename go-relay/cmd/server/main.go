@@ -149,10 +149,19 @@ func main() {
 	scheduler.Start()
 	defer scheduler.Stop()
 
+	// Bind the port before doing anything else that spawns subprocesses
+	// (notably the headless Chrome warm-up below). If another instance
+	// already holds this port, failing here means we exit before Chrome
+	// is ever launched instead of orphaning a freshly-spawned browser
+	// process when the later log.Fatal on ListenAndServe kills us.
+	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", cfg.Port))
+	if err != nil {
+		log.Fatal().Err(err).Msg("Server failed")
+	}
+
 	// Create and start HTTP server
 	srv := server.New(ctx, cfg, db, redisClient, version)
 	httpServer := &http.Server{
-		Addr:         fmt.Sprintf(":%d", cfg.Port),
 		Handler:      srv.Router(),
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 600 * time.Second, // Long for SSE/file uploads
@@ -165,7 +174,7 @@ func main() {
 		for _, ip := range lanIPs() {
 			log.Info().Str("url", fmt.Sprintf("http://%s:%d", ip, cfg.Port)).Msg("LAN URL (reachable from other devices on your network)")
 		}
-		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := httpServer.Serve(listener); err != nil && err != http.ErrServerClosed {
 			log.Fatal().Err(err).Msg("Server failed")
 		}
 	}()
@@ -207,6 +216,12 @@ func main() {
 	}
 	if internalServer != nil {
 		_ = internalServer.Shutdown(shutdownCtx)
+	}
+	if srv.Headless != nil {
+		// Without this the shared Chrome process (a child of this one) is
+		// never sent SIGKILL and survives as an orphan across restarts —
+		// each restart then piles up another live Chrome instance.
+		srv.Headless.Shutdown()
 	}
 
 	log.Info().Msg("Server stopped")

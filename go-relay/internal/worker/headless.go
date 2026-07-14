@@ -939,6 +939,20 @@ func (m *HeadlessManager) LaunchSession(apiKey, foundryURL, username, password, 
 	log.Info().Str("username", username).Msg("Logging in")
 	_, err = loginToFoundry(tabCtx, username, password)
 	if err != nil {
+		// The failure is opaque without seeing what page Chrome actually
+		// landed on (e.g. a "world is loading" splash instead of the join
+		// form) — capture the same debug artifacts as the canvas-timeout
+		// case below so this is diagnosable without reproducing live.
+		var screenshot []byte
+		if screenshotErr := chromedp.Run(tabCtx, chromedp.CaptureScreenshot(&screenshot)); screenshotErr == nil && len(screenshot) > 0 {
+			debugPath := filepath.Join(m.dataDir, "headless-login-debug.png")
+			os.WriteFile(debugPath, screenshot, 0644)
+			log.Warn().Str("screenshot", debugPath).Msg("Saved debug screenshot")
+		}
+		var pageURL, pageTitle string
+		chromedp.Run(tabCtx, chromedp.Location(&pageURL), chromedp.Title(&pageTitle))
+		log.Warn().Str("url", pageURL).Str("title", pageTitle).Msg("Browser state at login failure")
+
 		tabCancel()
 		return "", "", fmt.Errorf("login failed: %w", err)
 	}
@@ -953,7 +967,7 @@ func (m *HeadlessManager) LaunchSession(apiKey, foundryURL, username, password, 
 		// Debug screenshot
 		var screenshot []byte
 		if screenshotErr := chromedp.Run(tabCtx, chromedp.CaptureScreenshot(&screenshot)); screenshotErr == nil && len(screenshot) > 0 {
-			debugPath := "data/headless-debug.png"
+			debugPath := filepath.Join(m.dataDir, "headless-debug.png")
 			os.WriteFile(debugPath, screenshot, 0644)
 			log.Warn().Str("screenshot", debugPath).Msg("Saved debug screenshot")
 		}
