@@ -895,10 +895,21 @@ func (m *HeadlessManager) LaunchSession(apiKey, foundryURL, username, password, 
 	// Foundry's administrator gate must be passed before the world list exists.
 	// It is intentionally separate from the world GM login: the administrator
 	// password is stored in the relay credential vault and never leaves the relay.
-	if detectPage(tabCtx) == "admin" {
+	initialPage := detectPage(tabCtx)
+	log.Info().Str("pageType", initialPage).Msg("Detected page before login")
+	if initialPage == "admin" {
 		if err := loginToFoundryAdmin(tabCtx, adminPassword); err != nil {
 			tabCancel()
 			return "", "", fmt.Errorf("administrator login failed: %w", err)
+		}
+		// loginToFoundryAdmin authenticates via a raw fetch() outside the
+		// page's own SPA code, so the DOM never updates on success — the
+		// admin gate form is still rendered even though the server now
+		// considers us authenticated. Reload to pick up the post-auth page
+		// (world list or join screen), the same way world creation does below.
+		if err := chromedp.Run(tabCtx, chromedp.Navigate(foundryURL)); err != nil {
+			tabCancel()
+			return "", "", fmt.Errorf("reload after administrator login: %w", err)
 		}
 	}
 	if createWorldName != "" {
@@ -1774,7 +1785,11 @@ func detectPage(ctx context.Context) string {
 			err := chromedp.Run(checkCtx, chromedp.Evaluate(`
 				(function() {
 					if (document.querySelector('select[name="userid"]')) return 'login';
-					if (document.querySelector('form[action="/auth"], form#setup-auth, form#setup-authentication')) return 'admin';
+					// Foundry v14's admin gate form has no action attribute, and
+					// #setup-authentication is the wrapping div's id, not the
+					// form's — match on the adminPassword field itself instead,
+					// which is stable across the form-vs-fetch submission changes.
+					if (document.querySelector('input[name="adminPassword"], #setup-authentication')) return 'admin';
 					if (document.querySelector('input[name="password"]')) return 'login';
 					if (document.querySelector('li.package.world')) return 'worldList';
 					if (document.querySelector('#ui-left, #sidebar, #game')) return 'game';
@@ -1788,16 +1803,26 @@ func detectPage(ctx context.Context) string {
 	}
 }
 
-// loginToFoundryAdmin submits Foundry's server administrator gate. Foundry's
-// setup UI has changed markup across releases. Submit the rendered form so the
-// browser sends the same fields and cookies as a human administrator login.
+// loginToFoundryAdmin submits Foundry's server administrator gate. This mirrors
+// the request Foundry v14's own client makes via game.post(): a JSON POST to
+// /auth carrying BOTH action:"adminPassword" and the password. The action field
+// is required — without it the server ignores the request as an auth attempt
+// (it still returns 200 with the /auth page, which is why an earlier
+// action-less version silently "succeeded" without ever authenticating).
+//
+// Success/failure cannot be read from the HTTP status: a rejected password also
+// returns 200, redirected back to /auth. The real signal is the response's final
+// URL — Foundry redirects away from /auth (to /setup or /join) only when the
+// password is accepted.
 func loginToFoundryAdmin(ctx context.Context, password string) error {
 	loginCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	js := fmt.Sprintf(`
 			(async function() {
-				const resp = await fetch('/auth', {method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body:JSON.stringify({adminPassword:%q})});
-				return resp.status >= 200 && resp.status < 400;
+				const resp = await fetch('/auth', {method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body:JSON.stringify({action:'adminPassword', adminPassword:%q})});
+				if (!resp.ok) return false;
+				try { return !new URL(resp.url).pathname.replace(/\/$/, '').endsWith('/auth'); }
+				catch (e) { return false; }
 			})()
 		`, password)
 	var result bool
