@@ -631,7 +631,9 @@ func (m *HeadlessManager) startBrowserWithMode(mode string) error {
 
 	default: // swiftshader
 		opts = append(opts,
-			chromedp.Headless,
+			// Chrome removed the legacy headless implementation in recent
+			// releases; use the current mode explicitly for Chrome 132+.
+			chromedp.Flag("headless", "new"),
 			chromedp.Flag("enable-gpu-rasterization", true),
 			chromedp.Flag("enable-oop-rasterization", true),
 			chromedp.Flag("use-gl", "swiftshader"),
