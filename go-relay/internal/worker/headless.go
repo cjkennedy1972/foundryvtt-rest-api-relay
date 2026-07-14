@@ -270,7 +270,10 @@ type launchQueue struct {
 func NewHeadlessManager(clientManager *ws.ClientManager, redis *config.RedisClient, cfg *config.Config) *HeadlessManager {
 	userDataDir := cfg.ChromeUserDataDir
 	if userDataDir == "" {
-		userDataDir = filepath.Join(cfg.DataDir, "chrome-profile")
+		// Never reuse the default profile across relay processes. Chrome keeps
+		// SingletonLock/Socket state in this directory and a hard relay crash
+		// can leave the next allocator connected to a dead CDP profile.
+		userDataDir = filepath.Join(cfg.DataDir, fmt.Sprintf("chrome-profile-%d", os.Getpid()))
 	}
 	// 0 means sessions never time out due to inactivity.
 	var inactiveTimeout time.Duration
