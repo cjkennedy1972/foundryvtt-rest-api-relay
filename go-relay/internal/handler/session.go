@@ -104,6 +104,12 @@ func sessionHandshakeHandler(db *database.DB, cfg *config.Config) http.HandlerFu
 							credentialID = credential.ID
 							foundryURL = credential.FoundryURL
 							username = credential.FoundryUsername
+							// When AI-GM launches an already paired world it has no
+							// campaign-to-world link yet. Reuse the paired world's title
+							// so the headless browser selects it from Foundry's setup page.
+							if worldName == "" && known.WorldTitle.Valid {
+								worldName = known.WorldTitle.String
+							}
 							break
 						}
 					}
@@ -242,14 +248,15 @@ func sessionStartHandler(db *database.DB, cfg *config.Config, headless *worker.H
 				helpers.WriteError(w, http.StatusInternalServerError, "Failed to decrypt stored Foundry credential")
 				return
 			}
-			if credential.EncryptedAdminPassword == "" {
-				helpers.WriteError(w, http.StatusBadRequest, "Stored Foundry administrator password is not configured")
-				return
-			}
-			adminPassword, err = service.Decrypt(credential.EncryptedAdminPassword, credential.AdminPasswordIV, credential.AdminPasswordAuthTag, cfg.CredentialsEncryptionKey)
-			if err != nil {
-				helpers.WriteError(w, http.StatusInternalServerError, "Failed to decrypt stored Foundry administrator credential")
-				return
+			// A Foundry server without an administrator gate has no password to
+			// store. LaunchSession detects the page type and only attempts the
+			// administrator login when that gate is actually present.
+			if credential.EncryptedAdminPassword != "" {
+				adminPassword, err = service.Decrypt(credential.EncryptedAdminPassword, credential.AdminPasswordIV, credential.AdminPasswordAuthTag, cfg.CredentialsEncryptionKey)
+				if err != nil {
+					helpers.WriteError(w, http.StatusInternalServerError, "Failed to decrypt stored Foundry administrator credential")
+					return
+				}
 			}
 		} else {
 			helpers.WriteError(w, http.StatusBadRequest, "encryptedPassword is required for this handshake")

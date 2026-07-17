@@ -749,8 +749,8 @@ func RegisterCredentialRoutes(r chi.Router, db *database.DB, cfg *config.Config,
 				helpers.WriteError(w, http.StatusBadRequest, "Invalid request body")
 				return
 			}
-			if body.Name == "" || body.FoundryURL == "" || body.FoundryUsername == "" || body.FoundryPassword == "" || body.FoundryAdminPassword == "" {
-				helpers.WriteError(w, http.StatusBadRequest, "name, foundryUrl, foundryUsername, foundryPassword, and foundryAdminPassword are all required")
+			if body.Name == "" || body.FoundryURL == "" || body.FoundryUsername == "" {
+				helpers.WriteError(w, http.StatusBadRequest, "name, foundryUrl, and foundryUsername are required")
 				return
 			}
 

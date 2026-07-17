@@ -73,16 +73,6 @@
       return;
     }
 
-    if (!foundryPassword) {
-      message = 'Password is required.';
-      messageType = 'error';
-      return;
-    }
-    if (!editing && !foundryAdminPassword) {
-      message = 'Foundry administrator password is required when creating a credential';
-      return;
-    }
-
     saving = true;
     message = '';
 
@@ -180,10 +170,10 @@
             <input class="form-input" type="text" id="cred-user" bind:value={foundryUsername} placeholder="GM username" required />
           </div>
           <div class="form-group">
-            <label class="form-label" for="cred-pass">Password *</label>
-            <input class="form-input" type="password" id="cred-pass" bind:value={foundryPassword} placeholder="Encrypted at rest" required />
-            <label for="cred-admin-pass">Foundry Administrator Password</label>
-            <input class="form-input" type="password" id="cred-admin-pass" bind:value={foundryAdminPassword} placeholder={editing ? 'Leave blank to keep current' : 'Encrypted at rest'} required={!editing} />
+            <label class="form-label" for="cred-pass">Password (optional)</label>
+            <input class="form-input" type="password" id="cred-pass" bind:value={foundryPassword} placeholder={isEdit ? 'Leave blank to keep current' : 'Leave blank for passwordless login'} />
+            <label for="cred-admin-pass">Foundry Server Administrator Password (optional)</label>
+            <input class="form-input" type="password" id="cred-admin-pass" bind:value={foundryAdminPassword} placeholder={isEdit ? 'Leave blank to keep current' : 'Leave blank when the server has no administrator gate'} />
           </div>
         </div>
 
