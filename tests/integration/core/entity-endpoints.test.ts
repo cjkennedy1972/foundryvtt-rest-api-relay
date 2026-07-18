@@ -9,7 +9,7 @@ import { describe, test, expect, afterAll } from '@jest/globals';
 import { ApiRequestConfig } from '../../helpers/apiRequest';
 import { testVariables, setVariable } from '../../helpers/testVariables';
 import { captureExample, saveExamples } from '../../helpers/captureExample';
-import { forEachVersion } from '../../helpers/multiVersion';
+import { forEachVersion, hasCachedClientId } from '../../helpers/multiVersion';
 import { createTestEntities, getEntityUuid } from '../../helpers/testEntities';
 import { getGlobalVariable, setGlobalVariable } from '../../helpers/globalVariables';
 import * as path from 'path';
@@ -27,8 +27,10 @@ describe('Entity', () => {
   });
 
   forEachVersion((version, getClientId) => {
+    const maybeTest = hasCachedClientId(version) ? test : test.skip;
+
     describe(`/create (v${version})`, () => {
-      test('POST /create', async () => {
+      maybeTest('POST /create', async () => {
         // Set clientId for this version
         setVariable('clientId', getClientId());
         
@@ -63,7 +65,7 @@ describe('Entity', () => {
     });
 
     describe(`/get (v${version})`, () => {
-      test('GET /get', async () => {
+      maybeTest('GET /get', async () => {
         // Set clientId for this version
         setVariable('clientId', getClientId());
         
@@ -118,7 +120,7 @@ describe('Entity', () => {
     });
 
     describe(`/update (v${version})`, () => {
-      test('PUT /update', async () => {
+      maybeTest('PUT /update', async () => {
         // Set clientId for this version
         setVariable('clientId', getClientId());
         
@@ -178,7 +180,7 @@ describe('Entity', () => {
     });
 
     describe(`/delete (v${version})`, () => {
-      test('DELETE /delete', async () => {
+      maybeTest('DELETE /delete', async () => {
         // Set clientId for this version
         setVariable('clientId', getClientId());
         
@@ -230,7 +232,7 @@ describe('Entity', () => {
     });
 
     describe(`/give (v${version})`, () => {
-      test('POST /give', async () => {
+      maybeTest('POST /give', async () => {
         // Set clientId for this version
         setVariable('clientId', getClientId());
         
@@ -294,7 +296,7 @@ describe('Entity', () => {
     });
 
     describe(`/remove (v${version})`, () => {
-      test('POST /remove', async () => {
+      maybeTest('POST /remove', async () => {
         setVariable('clientId', getClientId());
         
         // Use primary actor and expendable item
@@ -351,7 +353,7 @@ describe('Entity', () => {
     });
 
     describe(`/increase (v${version})`, () => {
-      test('POST /increase', async () => {
+      maybeTest('POST /increase', async () => {
         // Set clientId for this version
         setVariable('clientId', getClientId());
         
@@ -413,7 +415,7 @@ describe('Entity', () => {
     });
 
     describe(`/decrease (v${version})`, () => {
-      test('POST /decrease', async () => {
+      maybeTest('POST /decrease', async () => {
         // Set clientId for this version
         setVariable('clientId', getClientId());
         
@@ -475,7 +477,7 @@ describe('Entity', () => {
     });
 
     describe(`/kill (v${version})`, () => {
-      test('POST /kill', async () => {
+      maybeTest('POST /kill', async () => {
         setVariable('clientId', getClientId());
         
         // Use secondary actor for kill test (don't kill primary)

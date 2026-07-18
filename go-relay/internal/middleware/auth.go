@@ -37,16 +37,42 @@ type authCacheEntry struct {
 }
 
 var (
-	authCacheMu  sync.RWMutex
-	authCacheMap = make(map[string]*authCacheEntry)
-	authCacheTTL = 60 * time.Second
+	authCacheMu    sync.RWMutex
+	authCacheMap   = make(map[string]*authCacheEntry)
+	authCacheTTL   = 60 * time.Second
+	cacheDone      chan struct{}
+	cacheCleanup   = 5 * time.Minute // interval between cache cleanup runs
 )
+
+func init() {
+	cacheDone = make(chan struct{})
+	go cacheCleanupLoop()
+}
 
 // SetAuthCacheTTL configures the auth cache TTL. Call once during server init.
 func SetAuthCacheTTL(d time.Duration) {
 	authCacheMu.Lock()
 	authCacheTTL = d
 	authCacheMu.Unlock()
+}
+
+// SetCacheCleanupInterval sets how often expired entries are purged (default: 5m).
+func SetCacheCleanupInterval(d time.Duration) {
+	authCacheMu.Lock()
+	cacheCleanup = d
+	authCacheMu.Unlock()
+}
+
+// StopCacheCleanup stops the background cache cleanup goroutine.
+func StopCacheCleanup() {
+	authCacheMu.Lock()
+	defer authCacheMu.Unlock()
+	select {
+	case <-cacheDone:
+		return
+	default:
+		close(cacheDone)
+	}
 }
 
 func getCachedAuth(apiKey string) (*authCacheEntry, bool) {
@@ -84,6 +110,36 @@ func InvalidateCachedAuthForUser(userID int64) {
 		}
 	}
 	authCacheMu.Unlock()
+}
+
+// cacheCleanupLoop periodically prunes expired entries from authCacheMap.
+// This prevents unbounded memory growth from high-churn API key usage.
+func cacheCleanupLoop() {
+	ticker := time.NewTicker(cacheCleanup)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-cacheDone:
+			return
+		case <-ticker.C:
+			pruneCache()
+		}
+	}
+}
+
+// pruneCache removes all expired entries from authCacheMap.
+// Called periodically by cacheCleanupLoop.
+func pruneCache() {
+	authCacheMu.Lock()
+	defer authCacheMu.Unlock()
+
+	now := time.Now()
+	for k, entry := range authCacheMap {
+		if now.After(entry.expiresAt) {
+			delete(authCacheMap, k)
+		}
+	}
 }
 
 // SessionOnlyMiddleware authenticates requests exclusively via Bearer session tokens.
@@ -294,7 +350,7 @@ func AuthMiddleware(db *database.DB, manager *ws.ClientManager) func(http.Handle
 
 			// Check parent user's email verification
 			if !parentUser.EmailVerified {
-				helpers.WriteError(w, http.StatusForbidden, "Account email not verified. Please verify your email address.")
+				helpers.WriteError(w, http.StatusForbidden, "Please verify your email address before using the API.")
 				return
 			}
 
@@ -447,7 +503,7 @@ func backfillAccessLog(r *http.Request, userID int64, kp string) {
 	}
 }
 
-// hasBearerHeader reports whether the request carries an Authorization: Bearer header.
+// hasBearerHeader reports whether the request carries an Authorization: Bearer ***
 func hasBearerHeader(r *http.Request) bool {
 	h := r.Header.Get("Authorization")
 	return len(h) > len("Bearer ") && h[:len("Bearer ")] == "Bearer "

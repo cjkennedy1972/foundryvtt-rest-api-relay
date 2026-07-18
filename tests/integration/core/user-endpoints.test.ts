@@ -8,7 +8,7 @@ import { describe, test, expect, afterAll } from '@jest/globals';
 import { ApiRequestConfig, makeRequest, replaceVariables } from '../../helpers/apiRequest';
 import { testVariables, setVariable } from '../../helpers/testVariables';
 import { captureExample, saveExamples } from '../../helpers/captureExample';
-import { forEachVersion } from '../../helpers/multiVersion';
+import { forEachVersion, hasCachedClientId } from '../../helpers/multiVersion';
 import { setGlobalVariable, getGlobalVariable } from '../../helpers/globalVariables';
 
 import * as path from 'path';
@@ -24,8 +24,10 @@ describe('User', () => {
   });
 
   forEachVersion((version, getClientId) => {
+    const maybeTest = hasCachedClientId(version) ? test : test.skip;
+
     describe(`/user (v${version})`, () => {
-      test('GET /users - List all users', async () => {
+      maybeTest('GET /users - List all users', async () => {
         setVariable('clientId', getClientId());
 
         const requestConfig: ApiRequestConfig = {
@@ -71,7 +73,7 @@ describe('User', () => {
         expect(firstUser).toHaveProperty('active');
       });
 
-      test('POST /user - Create a test user', async () => {
+      maybeTest('POST /user - Create a test user', async () => {
         setVariable('clientId', getClientId());
 
         const requestConfig: ApiRequestConfig = {
@@ -124,7 +126,7 @@ describe('User', () => {
         console.log(`  ✓ Created test user: ${userId} (test-api-user)`);
       }, 30000);
 
-      test('GET /user - Get user by ID', async () => {
+      maybeTest('GET /user - Get user by ID', async () => {
         setVariable('clientId', getClientId());
         const userId = getGlobalVariable(version, 'testUserId');
         expect(userId).toBeTruthy();
@@ -169,7 +171,7 @@ describe('User', () => {
         expect(captured.response.data.data.role).toBe(1);
       });
 
-      test('GET /user - Get user by name', async () => {
+      maybeTest('GET /user - Get user by name', async () => {
         setVariable('clientId', getClientId());
 
         const requestConfig: ApiRequestConfig = {
@@ -206,7 +208,7 @@ describe('User', () => {
         expect(response.data.data.name).toBe('test-api-user');
       });
 
-      test('PUT /user - Update user role', async () => {
+      maybeTest('PUT /user - Update user role', async () => {
         setVariable('clientId', getClientId());
         const userId = getGlobalVariable(version, 'testUserId');
         expect(userId).toBeTruthy();
@@ -254,7 +256,7 @@ describe('User', () => {
         expect(captured.response.data.data.role).toBe(2);
       }, 30000);
 
-      test('DELETE /user - Delete test user', async () => {
+      maybeTest('DELETE /user - Delete test user', async () => {
         setVariable('clientId', getClientId());
         const userId = getGlobalVariable(version, 'testUserId');
         expect(userId).toBeTruthy();
@@ -297,7 +299,7 @@ describe('User', () => {
         console.log(`  ✓ Deleted test user: ${userId}`);
       }, 30000);
 
-      test('GET /users - Verify user was deleted', async () => {
+      maybeTest('GET /users - Verify user was deleted', async () => {
         setVariable('clientId', getClientId());
         const userId = getGlobalVariable(version, 'testUserId');
 

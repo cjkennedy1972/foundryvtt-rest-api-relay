@@ -202,6 +202,9 @@ func (db *DB) migrateSQLite(ctx context.Context) error {
 			"passwordIv" TEXT NOT NULL,
 			"passwordAuthTag" TEXT NOT NULL,
 			world TEXT NOT NULL DEFAULT '',
+			"encryptedAdminPassword" TEXT NOT NULL DEFAULT '',
+			"adminPasswordIv" TEXT NOT NULL DEFAULT '',
+			"adminPasswordAuthTag" TEXT NOT NULL DEFAULT '',
 			"createdAt" TEXT DEFAULT (datetime('now')),
 			"updatedAt" TEXT DEFAULT (datetime('now'))
 		)`,
@@ -392,6 +395,9 @@ func (db *DB) migrateSQLite(ctx context.Context) error {
 		// auto-start flow uses this credential. When NULL, falls back to the
 		// user's first credential (works for single-Foundry-server deployments).
 		`ALTER TABLE KnownClients ADD COLUMN "credentialId" INTEGER`,
+		`ALTER TABLE Credentials ADD COLUMN "encryptedAdminPassword" TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE Credentials ADD COLUMN "adminPasswordIv" TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE Credentials ADD COLUMN "adminPasswordAuthTag" TEXT NOT NULL DEFAULT ''`,
 		// Cross-world tunneling settings: moved from per-token to per-world (KnownClient).
 		// All tokens for a world inherit these permissions; enforcement reads from KnownClient.
 		`ALTER TABLE KnownClients ADD COLUMN "allowedTargetClients" TEXT DEFAULT ''`,
@@ -1054,6 +1060,9 @@ func (db *DB) migratePostgres(ctx context.Context) error {
 			password_iv VARCHAR(255) NOT NULL,
 			password_auth_tag VARCHAR(255) NOT NULL,
 			world TEXT NOT NULL DEFAULT '',
+			encrypted_admin_password TEXT NOT NULL DEFAULT '',
+			admin_password_iv VARCHAR(255) NOT NULL DEFAULT '',
+			admin_password_auth_tag VARCHAR(255) NOT NULL DEFAULT '',
 			created_at TIMESTAMPTZ DEFAULT NOW(),
 			updated_at TIMESTAMPTZ DEFAULT NOW()
 		)`,
@@ -1448,6 +1457,9 @@ func (db *DB) migratePostgres(ctx context.Context) error {
 		{"Credentials", "encrypted_foundry_password", "encryptedFoundryPassword"},
 		{"Credentials", "password_iv", "passwordIv"},
 		{"Credentials", "password_auth_tag", "passwordAuthTag"},
+		{"Credentials", "encrypted_admin_password", "encryptedAdminPassword"},
+		{"Credentials", "admin_password_iv", "adminPasswordIv"},
+		{"Credentials", "admin_password_auth_tag", "adminPasswordAuthTag"},
 		{"Credentials", "created_at", "createdAt"},
 		{"Credentials", "updated_at", "updatedAt"},
 		// KnownClients table

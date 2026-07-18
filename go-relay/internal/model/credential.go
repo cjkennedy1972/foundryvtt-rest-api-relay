@@ -18,6 +18,9 @@ type Credential struct {
 	EncryptedFoundryPassword string `db:"encryptedFoundryPassword" json:"-"`
 	PasswordIV               string `db:"passwordIv" json:"-"`
 	PasswordAuthTag          string `db:"passwordAuthTag" json:"-"`
+	EncryptedAdminPassword   string `db:"encryptedAdminPassword" json:"-"`
+	AdminPasswordIV          string `db:"adminPasswordIv" json:"-"`
+	AdminPasswordAuthTag     string `db:"adminPasswordAuthTag" json:"-"`
 	// World is the optional default world to launch for headless auto-start,
 	// matched case-insensitively against a world's title or id on Foundry's setup
 	// screen. Empty falls back to the world the known client last connected as.
@@ -83,11 +86,12 @@ func (s *SQLCredentialStore) FindAllByUser(ctx context.Context, userID int64) ([
 
 func (s *SQLCredentialStore) Create(ctx context.Context, cred *Credential) error {
 	now := time.Now()
-	query := fmt.Sprintf(`INSERT INTO %s (%s, name, %s, %s, %s, %s, %s, %s, %s, %s)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+	query := fmt.Sprintf(`INSERT INTO %s (%s, name, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
 		s.tableName(),
 		s.col("user_id"), s.col("foundry_url"), s.col("foundry_username"),
 		s.col("encrypted_foundry_password"), s.col("password_iv"), s.col("password_auth_tag"),
+		s.col("encrypted_admin_password"), s.col("admin_password_iv"), s.col("admin_password_auth_tag"),
 		s.col("world"), s.col("created_at"), s.col("updated_at"))
 
 	if s.DBType != "sqlite" {
@@ -95,6 +99,7 @@ func (s *SQLCredentialStore) Create(ctx context.Context, cred *Credential) error
 		return s.DB.QueryRowContext(ctx, query,
 			cred.UserID, cred.Name, cred.FoundryURL, cred.FoundryUsername,
 			cred.EncryptedFoundryPassword, cred.PasswordIV, cred.PasswordAuthTag,
+			cred.EncryptedAdminPassword, cred.AdminPasswordIV, cred.AdminPasswordAuthTag,
 			cred.World, now, now,
 		).Scan(&cred.ID)
 	}
@@ -102,6 +107,7 @@ func (s *SQLCredentialStore) Create(ctx context.Context, cred *Credential) error
 	result, err := s.DB.ExecContext(ctx, query,
 		cred.UserID, cred.Name, cred.FoundryURL, cred.FoundryUsername,
 		cred.EncryptedFoundryPassword, cred.PasswordIV, cred.PasswordAuthTag,
+		cred.EncryptedAdminPassword, cred.AdminPasswordIV, cred.AdminPasswordAuthTag,
 		cred.World, now, now)
 	if err != nil {
 		return err
@@ -119,15 +125,17 @@ func (s *SQLCredentialStore) Create(ctx context.Context, cred *Credential) error
 func (s *SQLCredentialStore) Update(ctx context.Context, cred *Credential) error {
 	cred.UpdatedAt = NewSQLiteTime(time.Now())
 	query := fmt.Sprintf(`UPDATE %s SET name=$1, %s=$2, %s=$3,
-		%s=$4, %s=$5, %s=$6, %s=$7, %s=$8
-		WHERE id=$9`,
+		%s=$4, %s=$5, %s=$6, %s=$7, %s=$8, %s=$9, %s=$10, %s=$11
+		WHERE id=$12`,
 		s.tableName(),
 		s.col("foundry_url"), s.col("foundry_username"),
 		s.col("encrypted_foundry_password"), s.col("password_iv"), s.col("password_auth_tag"),
+		s.col("encrypted_admin_password"), s.col("admin_password_iv"), s.col("admin_password_auth_tag"),
 		s.col("world"), s.col("updated_at"))
 	_, err := s.DB.ExecContext(ctx, query,
 		cred.Name, cred.FoundryURL, cred.FoundryUsername,
 		cred.EncryptedFoundryPassword, cred.PasswordIV, cred.PasswordAuthTag,
+		cred.EncryptedAdminPassword, cred.AdminPasswordIV, cred.AdminPasswordAuthTag,
 		cred.World, cred.UpdatedAt, cred.ID)
 	return err
 }

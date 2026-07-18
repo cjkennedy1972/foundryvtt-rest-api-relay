@@ -92,7 +92,7 @@ describe('Sheet', () => {
           timeout: 30000,
         });
 
-        const contentType = binaryResponse.headers['content-type'] || '';
+        const contentType = String(binaryResponse.headers['content-type'] ?? '');
         console.log(`  Response Content-Type: ${contentType}`);
 
         if (binaryResponse.status === 200 && contentType.includes('image/')) {

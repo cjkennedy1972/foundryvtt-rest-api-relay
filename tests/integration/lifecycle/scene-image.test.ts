@@ -427,7 +427,7 @@ describe('Scene Image', () => {
         });
 
         expect(binaryResponse.status).toBe(200);
-        const contentType = binaryResponse.headers['content-type'] || '';
+        const contentType = String(binaryResponse.headers['content-type'] ?? '');
         console.log(`  Content-Type: ${contentType}`);
         expect(contentType).toContain('image/');
 

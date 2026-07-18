@@ -14,6 +14,7 @@
   let foundryUsername = $state('');
   let foundryPassword = $state('');
   let world = $state('');
+  let foundryAdminPassword = $state('');
   let saving = $state(false);
   let message = $state('');
   let messageType = $state<'success' | 'error'>('error');
@@ -40,6 +41,7 @@
     foundryUsername = '';
     foundryPassword = '';
     world = '';
+    foundryAdminPassword = '';
     showForm = true;
     message = '';
   }
@@ -51,6 +53,7 @@
     foundryUsername = cred.foundryUsername;
     foundryPassword = '';
     world = cred.world ?? '';
+    foundryAdminPassword = '';
     showForm = true;
     message = '';
   }
@@ -70,12 +73,6 @@
       return;
     }
 
-    if (!foundryPassword) {
-      message = 'Password is required.';
-      messageType = 'error';
-      return;
-    }
-
     saving = true;
     message = '';
 
@@ -87,6 +84,7 @@
         foundryUsername: foundryUsername.trim(),
         foundryPassword,
         world: world.trim(),
+        foundryAdminPassword,
       };
       result = await updateCredential(editingCredential!.id, body);
     } else {
@@ -96,6 +94,7 @@
         foundryUsername: foundryUsername.trim(),
         foundryPassword,
         world: world.trim(),
+        foundryAdminPassword,
       });
     }
 
@@ -171,8 +170,10 @@
             <input class="form-input" type="text" id="cred-user" bind:value={foundryUsername} placeholder="GM username" required />
           </div>
           <div class="form-group">
-            <label class="form-label" for="cred-pass">Password *</label>
-            <input class="form-input" type="password" id="cred-pass" bind:value={foundryPassword} placeholder="Encrypted at rest" required />
+            <label class="form-label" for="cred-pass">Password (optional)</label>
+            <input class="form-input" type="password" id="cred-pass" bind:value={foundryPassword} placeholder={isEdit ? 'Leave blank to keep current' : 'Leave blank for passwordless login'} />
+            <label for="cred-admin-pass">Foundry Server Administrator Password (optional)</label>
+            <input class="form-input" type="password" id="cred-admin-pass" bind:value={foundryAdminPassword} placeholder={isEdit ? 'Leave blank to keep current' : 'Leave blank when the server has no administrator gate'} />
           </div>
         </div>
 

@@ -11,7 +11,7 @@ import { makeRequest, replaceVariables } from '../../helpers/apiRequest';
 import { testVariables, setVariable } from '../../helpers/testVariables';
 import { WsTestClient } from '../../helpers/wsClient';
 import { captureWsExample, saveWsExamples } from '../../helpers/captureWsExample';
-import { forEachVersion } from '../../helpers/multiVersion';
+import { forEachVersion, hasCachedClientId } from '../../helpers/multiVersion';
 import * as path from 'path';
 
 // Store captured examples for documentation
@@ -49,14 +49,11 @@ describe('Combat Subscribe', () => {
   });
 
   forEachVersion((version, getClientId) => {
+    const maybeTest = hasCachedClientId(version) ? test : test.skip;
 
     describe(`Combat event subscription (v${version})`, () => {
-      test('WS subscribe to combat-events channel', async () => {
+      maybeTest('WS subscribe to combat-events channel', async () => {
         const clientId = getClientId();
-        if (!clientId) {
-          console.log('  Skipping: no clientId available');
-          return;
-        }
 
         const client = createClient();
         const connected = await client.connect(wsUrl, getApiKey(), clientId);
@@ -82,12 +79,8 @@ describe('Combat Subscribe', () => {
         }
       }, 15000);
 
-      test('WS unsubscribe from combat-events channel', async () => {
+      maybeTest('WS unsubscribe from combat-events channel', async () => {
         const clientId = getClientId();
-        if (!clientId) {
-          console.log('  Skipping: no clientId available');
-          return;
-        }
 
         const client = createClient();
         const connected = await client.connect(wsUrl, getApiKey(), clientId);
@@ -112,12 +105,8 @@ describe('Combat Subscribe', () => {
         expect(unsubResponse.channel).toBe('combat-events');
       }, 15000);
 
-      test('WS subscribe and receive a combat event', async () => {
+      maybeTest('WS subscribe and receive a combat event', async () => {
         const clientId = getClientId();
-        if (!clientId) {
-          console.log('  Skipping: no clientId available');
-          return;
-        }
 
         const client = createClient();
         await client.connect(wsUrl, getApiKey(), clientId);

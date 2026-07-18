@@ -15,14 +15,15 @@ import (
 
 // AdminDeps holds the dependencies needed by the admin router.
 type AdminDeps struct {
-	DB              *database.DB
-	Cfg             *config.Config
-	ClientManager   *ws.ClientManager
-	PendingReqs     *ws.PendingRequests
-	Headless        *worker.HeadlessManager
-	Redis           *config.RedisClient
-	Version         string
-	AdminPageHandler http.HandlerFunc // serves public-dist/admin/index.html at GET /admin
+	DB                  *database.DB
+	Cfg                 *config.Config
+	ClientManager       *ws.ClientManager
+	PendingReqs         *ws.PendingRequests
+	Headless            *worker.HeadlessManager
+	InteractiveSessions *ws.InteractiveSessionManager
+	Redis               *config.RedisClient
+	Version             string
+	AdminPageHandler    http.HandlerFunc // serves public-dist/admin/index.html at GET /admin
 }
 
 // AdminRouter mounts all /admin routes — both unauthenticated (login) and protected.
@@ -62,6 +63,7 @@ func AdminRouter(deps *AdminDeps) chi.Router {
 				protected.Mount("/audit-logs", AdminAuditRouter(deps.DB))
 				protected.Mount("/activity", AdminActivityRouter(deps.DB))
 				protected.Mount("/headless-sessions", AdminSessionsRouter(deps.DB, deps.Headless))
+				protected.Mount("/interactive-sessions", AdminInteractiveSessionsRouter(deps.DB, deps.InteractiveSessions))
 				protected.Mount("/system/health", AdminHealthRouter(deps.Cfg, deps.ClientManager, deps.PendingReqs, deps.Headless, deps.Redis, deps.Version))
 				protected.Mount("/ops", AdminOpsRouter(deps.DB, deps.ClientManager))
 				protected.Mount("/subscriptions", AdminSubscriptionsRouter(deps.DB))

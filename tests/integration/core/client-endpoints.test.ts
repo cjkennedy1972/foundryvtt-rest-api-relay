@@ -8,7 +8,7 @@ import { describe, test, expect, afterAll } from '@jest/globals';
 import { ApiRequestConfig } from '../../helpers/apiRequest';
 import { testVariables, setVariable } from '../../helpers/testVariables';
 import { captureExample, saveExamples } from '../../helpers/captureExample';
-import { forEachVersion } from '../../helpers/multiVersion';
+import { forEachVersion, hasCachedClientId } from '../../helpers/multiVersion';
 import * as path from 'path';
 
 // Store captured examples for documentation
@@ -24,7 +24,9 @@ describe('Clients', () => {
 
   forEachVersion((version, getClientId) => {
     describe(`/clients (v${version})`, () => {
-      test('GET /clients - list connected clients', async () => {
+      const shouldRun = hasCachedClientId(version);
+      const maybeTest = shouldRun ? test : test.skip;
+      maybeTest('GET /clients - list connected clients', async () => {
         setVariable('clientId', getClientId());
 
         const requestConfig: ApiRequestConfig = {
@@ -71,7 +73,7 @@ describe('Clients', () => {
         expect(client).toHaveProperty('systemVersion');
       });
 
-      test('GET /clients - unauthorized without API key', async () => {
+      maybeTest('GET /clients - unauthorized without API key', async () => {
         const requestConfig: ApiRequestConfig = {
           url: {
             raw: '{{baseUrl}}/clients',

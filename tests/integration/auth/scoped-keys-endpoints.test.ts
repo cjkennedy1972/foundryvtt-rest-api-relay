@@ -10,7 +10,7 @@ import { ApiRequestConfig, makeRequest } from '../../helpers/apiRequest';
 import { testVariables, setVariable } from '../../helpers/testVariables';
 import { ensureSessionToken } from '../../helpers/sessionAuth';
 import { captureExample, appendExamples } from '../../helpers/captureExample';
-import { forEachVersion } from '../../helpers/multiVersion';
+import { forEachVersion, hasCachedClientId } from '../../helpers/multiVersion';
 import * as path from 'path';
 
 // Store captured examples for documentation
@@ -275,8 +275,10 @@ describe('Scoped API Keys', () => {
 
   describe('Auto-Routing', () => {
     forEachVersion((version, getClientId) => {
+      const maybeTest = hasCachedClientId(version) ? test : test.skip;
+
       describe(`Scoped key auto-routing (v${version})`, () => {
-        test('Create scoped key with scopedClientId', async () => {
+        maybeTest('Create scoped key with scopedClientId', async () => {
           const clientId = getClientId();
           expect(clientId).toBeTruthy();
 
@@ -311,7 +313,7 @@ describe('Scoped API Keys', () => {
           createdKeyIds.push(routingKeyId);
         });
 
-        test('GET /structure - auto-routes via scoped key (no clientId param)', async () => {
+        maybeTest('GET /structure - auto-routes via scoped key (no clientId param)', async () => {
           expect(routingKeyToken).toBeTruthy();
 
           // Use scoped key WITHOUT clientId query param — should auto-route
@@ -335,7 +337,7 @@ describe('Scoped API Keys', () => {
           expect(captured.response.data).toBeTruthy();
         });
 
-        test('Delete auto-routing scoped key', async () => {
+        maybeTest('Delete auto-routing scoped key', async () => {
           expect(routingKeyId).toBeTruthy();
 
           const requestConfig: ApiRequestConfig = {

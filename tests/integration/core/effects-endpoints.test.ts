@@ -11,7 +11,7 @@ import { describe, test, expect, afterAll } from '@jest/globals';
 import { ApiRequestConfig, makeRequest, replaceVariables } from '../../helpers/apiRequest';
 import { testVariables, setVariable } from '../../helpers/testVariables';
 import { captureExample, saveExamples } from '../../helpers/captureExample';
-import { forEachVersion } from '../../helpers/multiVersion';
+import { forEachVersion, hasCachedClientId } from '../../helpers/multiVersion';
 import { getEntityUuid } from '../../helpers/testEntities';
 import * as path from 'path';
 
@@ -28,13 +28,14 @@ describe('Effects', () => {
   });
 
   forEachVersion((version, getClientId) => {
+    const maybeTest = hasCachedClientId(version) ? test : test.skip;
 
     // ═══════════════════════════════════════════
     // GET /effects/list
     // ═══════════════════════════════════════════
 
     describe(`GET /effects/list (v${version})`, () => {
-      test('GET /effects/list - list all available status effects', async () => {
+      maybeTest('GET /effects/list - list all available status effects', async () => {
         setVariable('clientId', getClientId());
 
         const requestConfig: ApiRequestConfig = {
@@ -67,7 +68,7 @@ describe('Effects', () => {
     // ═══════════════════════════════════════════
 
     describe(`GET /effects (v${version})`, () => {
-      test('GET /effects - list active effects on an actor', async () => {
+      maybeTest('GET /effects - list active effects on an actor', async () => {
         setVariable('clientId', getClientId());
 
         const actorUuid = getEntityUuid(version, 'Actor', 'primary');
@@ -106,7 +107,7 @@ describe('Effects', () => {
     // ═══════════════════════════════════════════
 
     describe(`POST /effects + DELETE /effects (v${version})`, () => {
-      test('POST /effects - add a custom effect, then DELETE to remove it', async () => {
+      maybeTest('POST /effects - add a custom effect, then DELETE to remove it', async () => {
         setVariable('clientId', getClientId());
 
         const actorUuid = getEntityUuid(version, 'Actor', 'primary');

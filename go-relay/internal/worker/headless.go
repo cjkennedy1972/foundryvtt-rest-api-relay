@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	goruntime "runtime"
 	"strings"
 	"sync"
@@ -208,6 +209,7 @@ type HeadlessDeps struct {
 // HeadlessManager manages a shared Chrome browser with isolated contexts per session.
 type HeadlessManager struct {
 	mu              sync.RWMutex
+	browserMu       sync.Mutex
 	sessions        map[string]*HeadlessSession // sessionID -> session
 	pending         map[string]*PendingHeadless // sessionID -> pending
 	clientManager   *ws.ClientManager
@@ -268,7 +270,10 @@ type launchQueue struct {
 func NewHeadlessManager(clientManager *ws.ClientManager, redis *config.RedisClient, cfg *config.Config) *HeadlessManager {
 	userDataDir := cfg.ChromeUserDataDir
 	if userDataDir == "" {
-		userDataDir = filepath.Join(cfg.DataDir, "chrome-profile")
+		// Never reuse the default profile across relay processes. Chrome keeps
+		// SingletonLock/Socket state in this directory and a hard relay crash
+		// can leave the next allocator connected to a dead CDP profile.
+		userDataDir = filepath.Join(cfg.DataDir, fmt.Sprintf("chrome-profile-%d", os.Getpid()))
 	}
 	// 0 means sessions never time out due to inactivity.
 	var inactiveTimeout time.Duration
@@ -481,6 +486,8 @@ func resolveRenderMode(configured string) string {
 // ensureBrowser starts the shared browser, selecting the best available render
 // mode and falling back to SwiftShader if the primary mode fails.
 func (m *HeadlessManager) ensureBrowser() error {
+	m.browserMu.Lock()
+	defer m.browserMu.Unlock()
 	if m.browserReady {
 		return nil
 	}
@@ -624,7 +631,9 @@ func (m *HeadlessManager) startBrowserWithMode(mode string) error {
 
 	default: // swiftshader
 		opts = append(opts,
-			chromedp.Headless,
+			// Chrome removed the legacy headless implementation in recent
+			// releases; use the current mode explicitly for Chrome 132+.
+			chromedp.Flag("headless", "new"),
 			chromedp.Flag("enable-gpu-rasterization", true),
 			chromedp.Flag("enable-oop-rasterization", true),
 			chromedp.Flag("use-gl", "swiftshader"),
@@ -668,20 +677,50 @@ func (m *HeadlessManager) newIsolatedTab() (ctx context.Context, cancel context.
 	if err := m.ensureBrowser(); err != nil {
 		return nil, nil, err
 	}
+	ctx, cancel, err = m.createIsolatedTab()
+	if err == nil {
+		return ctx, cancel, nil
+	}
+	// Chrome can retain a live-looking but canceled CDP root context after a
+	// crash, profile lock race, or allocator restart. Recreate the shared
+	// browser once instead of returning a failure that triggers a restart loop.
+	log.Warn().Err(err).Msg("Shared Chrome context is stale; recreating browser")
+	m.resetBrowser()
+	if err := m.ensureBrowser(); err != nil {
+		return nil, nil, fmt.Errorf("restart browser: %w", err)
+	}
+	return m.createIsolatedTab()
+}
+
+func (m *HeadlessManager) createIsolatedTab() (ctx context.Context, cancel context.CancelFunc, err error) {
+	if m.browserCtx == nil || m.browserCtx.Err() != nil {
+		return nil, nil, fmt.Errorf("shared browser context canceled")
+	}
 
 	c := chromedp.FromContext(m.browserCtx)
 	browserExec := cdp.WithExecutor(m.browserCtx, c.Browser)
 
 	// Create isolated browser context via browser-level connection
 	bcID, err := target.CreateBrowserContext().WithDisposeOnDetach(true).Do(browserExec)
+	isolated := err == nil
 	if err != nil {
-		return nil, nil, fmt.Errorf("create browser context: %w", err)
+		// Some macOS Chrome builds expose Target.createBrowserContext but
+		// cancel the command for headless SwiftShader sessions. A dedicated tab
+		// still provides a usable single-GM session and is preferable to making
+		// startup impossible. Keep the fallback explicit in the logs.
+		log.Warn().Err(err).Msg("Chrome isolated context unavailable; using dedicated headless tab")
 	}
 
 	// Create target using minimal params (Chrome 146 compat)
-	tid, err := (&minCreateTarget{URL: "about:blank", BCI: bcID}).Do(browserExec)
+	create := &minCreateTarget{URL: "about:blank"}
+	if isolated {
+		create.BCI = bcID
+	}
+	tid, err := create.Do(browserExec)
 	if err != nil {
-		target.DisposeBrowserContext(bcID).Do(browserExec)
+		if isolated {
+			target.DisposeBrowserContext(bcID).Do(browserExec)
+		}
 		return nil, nil, fmt.Errorf("create target: %w", err)
 	}
 
@@ -691,10 +730,27 @@ func (m *HeadlessManager) newIsolatedTab() (ctx context.Context, cancel context.
 	// Wrap cancel to also dispose the browser context
 	combinedCancel := func() {
 		tabCancel()
-		target.DisposeBrowserContext(bcID).Do(browserExec)
+		if isolated {
+			target.DisposeBrowserContext(bcID).Do(browserExec)
+		}
 	}
 
 	return tabCtx, combinedCancel, nil
+}
+
+func (m *HeadlessManager) resetBrowser() {
+	m.browserMu.Lock()
+	defer m.browserMu.Unlock()
+	if m.browserCancel != nil {
+		m.browserCancel()
+	}
+	if m.allocCancel != nil {
+		m.allocCancel()
+	}
+	m.browserCtx = nil
+	m.browserCancel = nil
+	m.allocCancel = nil
+	m.browserReady = false
 }
 
 // OnClientDisconnected cleans up any headless session associated with the disconnected client.
@@ -754,7 +810,7 @@ func injectConnectionTokenSeed(tabCtx context.Context, rawToken string) error {
 // LaunchSession launches a headless Foundry session. If seedToken is non-empty,
 // the connection token is injected into localStorage before navigation so the
 // Foundry module can connect without a manual pairing flow.
-func (m *HeadlessManager) LaunchSession(apiKey, foundryURL, username, password, worldName, seedToken string) (sessionID, clientID string, err error) {
+func (m *HeadlessManager) LaunchSession(apiKey, foundryURL, username, password, adminPassword, worldName, seedToken, createWorldName, createWorldSystem string) (sessionID, clientID string, err error) {
 	// Clean up stale sessions
 	m.mu.Lock()
 	for id, s := range m.sessions {
@@ -836,6 +892,40 @@ func (m *HeadlessManager) LaunchSession(apiKey, foundryURL, username, password, 
 		document.querySelectorAll('.notification .close, .notification a.close, #notifications .notification .close, .notification-pip, .notification .notification-close').forEach(el => el.click());
 	`, nil))
 
+	// Foundry's administrator gate must be passed before the world list exists.
+	// It is intentionally separate from the world GM login: the administrator
+	// password is stored in the relay credential vault and never leaves the relay.
+	initialPage := detectPage(tabCtx)
+	log.Info().Str("pageType", initialPage).Msg("Detected page before login")
+	if initialPage == "admin" {
+		if err := loginToFoundryAdmin(tabCtx, adminPassword); err != nil {
+			tabCancel()
+			return "", "", fmt.Errorf("administrator login failed: %w", err)
+		}
+		// loginToFoundryAdmin authenticates via a raw fetch() outside the
+		// page's own SPA code, so the DOM never updates on success — the
+		// admin gate form is still rendered even though the server now
+		// considers us authenticated. Reload to pick up the post-auth page
+		// (world list or join screen), the same way world creation does below.
+		if err := chromedp.Run(tabCtx, chromedp.Navigate(foundryURL)); err != nil {
+			tabCancel()
+			return "", "", fmt.Errorf("reload after administrator login: %w", err)
+		}
+	}
+	if createWorldName != "" {
+		if pageType := detectPage(tabCtx); pageType == "worldList" {
+			if err := createWorld(tabCtx, createWorldName, createWorldSystem); err != nil {
+				tabCancel()
+				return "", "", fmt.Errorf("world creation failed: %w", err)
+			}
+			// World creation returns to setup; re-load the list before selecting.
+			if err := chromedp.Run(tabCtx, chromedp.Navigate(foundryURL)); err != nil {
+				tabCancel()
+				return "", "", fmt.Errorf("reload world list after creation: %w", err)
+			}
+		}
+	}
+
 	// World selection — only if we're on the world list page, not the login page
 	if worldName != "" {
 		// Check which page we're on: world list or login
@@ -860,6 +950,20 @@ func (m *HeadlessManager) LaunchSession(apiKey, foundryURL, username, password, 
 	log.Info().Str("username", username).Msg("Logging in")
 	_, err = loginToFoundry(tabCtx, username, password)
 	if err != nil {
+		// The failure is opaque without seeing what page Chrome actually
+		// landed on (e.g. a "world is loading" splash instead of the join
+		// form) — capture the same debug artifacts as the canvas-timeout
+		// case below so this is diagnosable without reproducing live.
+		var screenshot []byte
+		if screenshotErr := chromedp.Run(tabCtx, chromedp.CaptureScreenshot(&screenshot)); screenshotErr == nil && len(screenshot) > 0 {
+			debugPath := filepath.Join(m.dataDir, "headless-login-debug.png")
+			os.WriteFile(debugPath, screenshot, 0644)
+			log.Warn().Str("screenshot", debugPath).Msg("Saved debug screenshot")
+		}
+		var pageURL, pageTitle string
+		chromedp.Run(tabCtx, chromedp.Location(&pageURL), chromedp.Title(&pageTitle))
+		log.Warn().Str("url", pageURL).Str("title", pageTitle).Msg("Browser state at login failure")
+
 		tabCancel()
 		return "", "", fmt.Errorf("login failed: %w", err)
 	}
@@ -874,7 +978,7 @@ func (m *HeadlessManager) LaunchSession(apiKey, foundryURL, username, password, 
 		// Debug screenshot
 		var screenshot []byte
 		if screenshotErr := chromedp.Run(tabCtx, chromedp.CaptureScreenshot(&screenshot)); screenshotErr == nil && len(screenshot) > 0 {
-			debugPath := "data/headless-debug.png"
+			debugPath := filepath.Join(m.dataDir, "headless-debug.png")
 			os.WriteFile(debugPath, screenshot, 0644)
 			log.Warn().Str("screenshot", debugPath).Msg("Saved debug screenshot")
 		}
@@ -1680,6 +1784,12 @@ func detectPage(ctx context.Context) string {
 			var result string
 			err := chromedp.Run(checkCtx, chromedp.Evaluate(`
 				(function() {
+					if (document.querySelector('select[name="userid"]')) return 'login';
+					// Foundry v14's admin gate form has no action attribute, and
+					// #setup-authentication is the wrapping div's id, not the
+					// form's — match on the adminPassword field itself instead,
+					// which is stable across the form-vs-fetch submission changes.
+					if (document.querySelector('input[name="adminPassword"], #setup-authentication')) return 'admin';
 					if (document.querySelector('input[name="password"]')) return 'login';
 					if (document.querySelector('li.package.world')) return 'worldList';
 					if (document.querySelector('#ui-left, #sidebar, #game')) return 'game';
@@ -1691,6 +1801,41 @@ func detectPage(ctx context.Context) string {
 			}
 		}
 	}
+}
+
+// loginToFoundryAdmin submits Foundry's server administrator gate. This mirrors
+// the request Foundry v14's own client makes via game.post(): a JSON POST to
+// /auth carrying BOTH action:"adminPassword" and the password. The action field
+// is required — without it the server ignores the request as an auth attempt
+// (it still returns 200 with the /auth page, which is why an earlier
+// action-less version silently "succeeded" without ever authenticating).
+//
+// Success/failure cannot be read from the HTTP status: a rejected password also
+// returns 200, redirected back to /auth. The real signal is the response's final
+// URL — Foundry redirects away from /auth (to /setup or /join) only when the
+// password is accepted.
+func loginToFoundryAdmin(ctx context.Context, password string) error {
+	loginCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	js := fmt.Sprintf(`
+			(async function() {
+				const resp = await fetch('/auth', {method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body:JSON.stringify({action:'adminPassword', adminPassword:%q})});
+				if (!resp.ok) return false;
+				try { return !new URL(resp.url).pathname.replace(/\/$/, '').endsWith('/auth'); }
+				catch (e) { return false; }
+			})()
+		`, password)
+	var result bool
+	if err := chromedp.Run(loginCtx, chromedp.Evaluate(js, &result, func(p *runtime.EvaluateParams) *runtime.EvaluateParams {
+		return p.WithAwaitPromise(true)
+	})); err != nil {
+		return err
+	}
+	if !result {
+		return fmt.Errorf("administrator authentication rejected")
+	}
+	time.Sleep(2 * time.Second)
+	return nil
 }
 
 func selectWorld(ctx context.Context, worldName string) error {
@@ -1725,6 +1870,43 @@ func selectWorld(ctx context.Context, worldName string) error {
 		return fmt.Errorf("world %q not found", worldName)
 	}
 	time.Sleep(2 * time.Second)
+	return nil
+}
+
+// createWorld uses Foundry's authenticated setup action. It is deliberately
+// performed in the administrator-authenticated browser context so no admin
+// password or setup cookie crosses the relay boundary.
+func createWorld(ctx context.Context, title, systemID string) error {
+	if systemID == "" {
+		return fmt.Errorf("createWorldSystem is required when creating a world")
+	}
+	id := strings.ToLower(strings.TrimSpace(title))
+	id = regexp.MustCompile(`[^a-z0-9]+`).ReplaceAllString(id, "-")
+	id = strings.Trim(id, "-")
+	if id == "" {
+		return fmt.Errorf("world title does not produce a valid world id")
+	}
+	js := fmt.Sprintf(`
+		(async function() {
+			const response = await fetch('/create', {
+				method: 'POST', headers: {'Content-Type': 'application/json'},
+				body: JSON.stringify({action:'createWorld', title:%q, id:%q, system:%q, launch:false})
+			});
+			const text = await response.text();
+			if (!response.ok) return 'fail:' + text.substring(0, 240);
+			try { const data = JSON.parse(text); if (data.error) return 'fail:' + data.error; } catch(e) {}
+			return 'ok';
+		})()
+	`, title, id, systemID)
+	var result string
+	createCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if err := chromedp.Run(createCtx, chromedp.Evaluate(js, &result)); err != nil {
+		return err
+	}
+	if !strings.HasPrefix(result, "ok") {
+		return fmt.Errorf("%s", result)
+	}
 	return nil
 }
 

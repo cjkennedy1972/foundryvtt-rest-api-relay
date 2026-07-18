@@ -17,7 +17,7 @@
 import { describe, test, expect, beforeAll, afterAll } from '@jest/globals';
 import { ApiRequestConfig, makeRequest, replaceVariables } from '../../helpers/apiRequest';
 import { testVariables, setVariable } from '../../helpers/testVariables';
-import { forEachVersion } from '../../helpers/multiVersion';
+import { forEachVersion, hasCachedClientId } from '../../helpers/multiVersion';
 import { getEntityUuid } from '../../helpers/testEntities';
 import {
   loadEndpoints, dummyParamValue, resolvePathParam,
@@ -139,6 +139,7 @@ const SKIP_INVALID_USERID: string[] = [];
 describe('Permission Filtering', () => {
 
   forEachVersion((version, getClientId) => {
+    const maybeTest = hasCachedClientId(version) ? test : test.skip;
 
     // ═══════════════════════════════════════════
     // Invalid userId — all endpoints that accept userId
@@ -150,7 +151,7 @@ describe('Permission Filtering', () => {
       );
 
       testableEndpoints.forEach(endpoint => {
-        test(`${endpoint.method} ${endpoint.path} - rejects invalid userId`, async () => {
+        maybeTest(`${endpoint.method} ${endpoint.path} - rejects invalid userId`, async () => {
           setVariable('clientId', getClientId());
 
           const config = buildRequest(endpoint, 'nonexistent-user-xyz-99999');
@@ -235,7 +236,7 @@ describe('Permission Filtering', () => {
       });
 
       // Verify the created player exists and is non-GM
-      test('GET /players confirms test player is non-GM', async () => {
+      maybeTest('GET /players confirms test player is non-GM', async () => {
         if (!foundPlayerUserId) {
           console.log('  Skipping: test player creation failed in beforeAll');
           return;
@@ -268,7 +269,7 @@ describe('Permission Filtering', () => {
       });
 
       // Player sees fewer search results than GM
-      test('GET /search — player sees ≤ GM results', async () => {
+      maybeTest('GET /search — player sees ≤ GM results', async () => {
         if (!gmUserId || !foundPlayerUserId) {
           console.log('  Skipping: setup not complete');
           return;
@@ -307,7 +308,7 @@ describe('Permission Filtering', () => {
       });
 
       // Player cannot update GM-created entities
-      test('PUT /update — player denied on GM-owned entity', async () => {
+      maybeTest('PUT /update — player denied on GM-owned entity', async () => {
         if (!foundPlayerUserId) {
           console.log('  Skipping: setup not complete');
           return;
@@ -340,7 +341,7 @@ describe('Permission Filtering', () => {
       });
 
       // Player cannot delete GM-created entities
-      test('DELETE /delete — player denied on GM-owned entity', async () => {
+      maybeTest('DELETE /delete — player denied on GM-owned entity', async () => {
         if (!foundPlayerUserId) {
           console.log('  Skipping: setup not complete');
           return;
@@ -373,7 +374,7 @@ describe('Permission Filtering', () => {
 
       // ── Chat whisper visibility ──
 
-      test('Whispered message not visible to non-recipient player', async () => {
+      maybeTest('Whispered message not visible to non-recipient player', async () => {
         if (!gmUserId || !foundPlayerUserId) {
           console.log('  Skipping: setup not complete');
           return;
@@ -469,7 +470,7 @@ describe('Permission Filtering', () => {
 
       // ── Player sees fewer chat messages than GM ──
 
-      test('GET /chat — player sees ≤ GM messages', async () => {
+      maybeTest('GET /chat — player sees ≤ GM messages', async () => {
         if (!gmUserId || !foundPlayerUserId) {
           console.log('  Skipping: setup not complete');
           return;

@@ -10,7 +10,7 @@ import { describe, test, expect, afterAll } from '@jest/globals';
 import { ApiRequestConfig, makeRequest, replaceVariables } from '../../helpers/apiRequest';
 import { testVariables, setVariable } from '../../helpers/testVariables';
 import { captureExample, saveExamples } from '../../helpers/captureExample';
-import { forEachVersion } from '../../helpers/multiVersion';
+import { forEachVersion, hasCachedClientId } from '../../helpers/multiVersion';
 import { setGlobalVariable, getGlobalVariable } from '../../helpers/globalVariables';
 import * as path from 'path';
 
@@ -27,13 +27,14 @@ describe('Playlist Control', () => {
   });
 
   forEachVersion((version, getClientId) => {
+    const maybeTest = hasCachedClientId(version) ? test : test.skip;
 
     // ═══════════════════════════════════════════
     // Setup: Create a test playlist with a sound
     // ═══════════════════════════════════════════
 
     describe(`Setup: Create test playlist (v${version})`, () => {
-      test('POST /create - Create test playlist with embedded sound', async () => {
+      maybeTest('POST /create - Create test playlist with embedded sound', async () => {
         setVariable('clientId', getClientId());
 
         const requestConfig: ApiRequestConfig = {
@@ -86,7 +87,7 @@ describe('Playlist Control', () => {
     // ═══════════════════════════════════════════
 
     describe(`GET /playlists (v${version})`, () => {
-      test('GET /playlists - list all playlists', async () => {
+      maybeTest('GET /playlists - list all playlists', async () => {
         setVariable('clientId', getClientId());
 
         const requestConfig: ApiRequestConfig = {
@@ -120,7 +121,7 @@ describe('Playlist Control', () => {
     // ═══════════════════════════════════════════
 
     describe(`POST /playlist/play (v${version})`, () => {
-      test('POST /playlist/play - play a playlist by name', async () => {
+      maybeTest('POST /playlist/play - play a playlist by name', async () => {
         setVariable('clientId', getClientId());
 
         const playlistName = getGlobalVariable(version, 'testPlaylistName') as string;
@@ -159,7 +160,7 @@ describe('Playlist Control', () => {
     // ═══════════════════════════════════════════
 
     describe(`POST /playlist/next (v${version})`, () => {
-      test('POST /playlist/next - skip to next track', async () => {
+      maybeTest('POST /playlist/next - skip to next track', async () => {
         setVariable('clientId', getClientId());
 
         const playlistName = getGlobalVariable(version, 'testPlaylistName') as string;
@@ -197,7 +198,7 @@ describe('Playlist Control', () => {
     // ═══════════════════════════════════════════
 
     describe(`POST /playlist/volume (v${version})`, () => {
-      test('POST /playlist/volume - set playlist volume', async () => {
+      maybeTest('POST /playlist/volume - set playlist volume', async () => {
         setVariable('clientId', getClientId());
 
         const playlistName = getGlobalVariable(version, 'testPlaylistName') as string;
@@ -235,7 +236,7 @@ describe('Playlist Control', () => {
     // ═══════════════════════════════════════════
 
     describe(`POST /playlist/stop (v${version})`, () => {
-      test('POST /playlist/stop - stop a playlist by name', async () => {
+      maybeTest('POST /playlist/stop - stop a playlist by name', async () => {
         setVariable('clientId', getClientId());
 
         const playlistName = getGlobalVariable(version, 'testPlaylistName') as string;
@@ -274,7 +275,7 @@ describe('Playlist Control', () => {
     // ═══════════════════════════════════════════
 
     describe(`POST /play-sound (v${version})`, () => {
-      test('POST /play-sound - play a one-shot sound effect', async () => {
+      maybeTest('POST /play-sound - play a one-shot sound effect', async () => {
         setVariable('clientId', getClientId());
 
         // sounds/dice.wav ships with every Foundry installation
@@ -313,7 +314,7 @@ describe('Playlist Control', () => {
     // ═══════════════════════════════════════════
 
     describe(`POST /stop-sound (v${version})`, () => {
-      test('POST /stop-sound - stop a playing sound by src', async () => {
+      maybeTest('POST /stop-sound - stop a playing sound by src', async () => {
         setVariable('clientId', getClientId());
 
         const requestConfig: ApiRequestConfig = {
@@ -344,7 +345,7 @@ describe('Playlist Control', () => {
         expect(captured.response.data.data).toHaveProperty('src', 'sounds/dice.wav');
       }, 15000);
 
-      test('POST /stop-sound - stop all playing sounds', async () => {
+      maybeTest('POST /stop-sound - stop all playing sounds', async () => {
         setVariable('clientId', getClientId());
 
         const requestConfig: ApiRequestConfig = {
@@ -379,7 +380,7 @@ describe('Playlist Control', () => {
     // ═══════════════════════════════════════════
 
     describe(`Cleanup: Delete test playlist (v${version})`, () => {
-      test('DELETE /delete - Delete test playlist', async () => {
+      maybeTest('DELETE /delete - Delete test playlist', async () => {
         setVariable('clientId', getClientId());
 
         const playlistUuid = getGlobalVariable(version, 'testPlaylistUuid') as string;

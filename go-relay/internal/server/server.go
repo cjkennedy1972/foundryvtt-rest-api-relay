@@ -725,13 +725,14 @@ func (s *Server) setupRouter() *chi.Mux {
 	r.Group(func(adm chi.Router) {
 		adm.Use(appmw.AdminIPAllowlist(s.cfg.AdminAllowedIPs))
 		adm.Mount("/admin", handler.AdminRouter(&handler.AdminDeps{
-			DB:            s.db,
-			Cfg:           s.cfg,
-			ClientManager: s.ClientManager,
-			PendingReqs:   s.PendingReqs,
-			Headless:      s.Headless,
-			Redis:         s.redis,
-			Version:       s.version,
+			DB:                  s.db,
+			Cfg:                 s.cfg,
+			ClientManager:       s.ClientManager,
+			PendingReqs:         s.PendingReqs,
+			Headless:            s.Headless,
+			InteractiveSessions: s.InteractiveSessions,
+			Redis:               s.redis,
+			Version:             s.version,
 			// Serve the admin SPA at GET /admin — handled inside AdminRouter at "/"
 			// because Chi's Mount intercepts the exact /admin path before an outer
 			// Get("/admin") can match it in the trie.

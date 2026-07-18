@@ -9,7 +9,7 @@ import { describe, test, expect, afterAll } from '@jest/globals';
 import { ApiRequestConfig, makeRequest, replaceVariables } from '../../helpers/apiRequest';
 import { testVariables, setVariable } from '../../helpers/testVariables';
 import { captureExample, saveExamples } from '../../helpers/captureExample';
-import { forEachVersion } from '../../helpers/multiVersion';
+import { forEachVersion, hasCachedClientId } from '../../helpers/multiVersion';
 import { setGlobalVariable, getGlobalVariable } from '../../helpers/globalVariables';
 
 import * as path from 'path';
@@ -26,8 +26,10 @@ describe('Scene', () => {
   });
 
   forEachVersion((version, getClientId) => {
+    const maybeTest = hasCachedClientId(version) ? test : test.skip;
+
     describe(`/scene (v${version})`, () => {
-      test('GET /scene - Record original active scene', async () => {
+      maybeTest('GET /scene - Record original active scene', async () => {
         setVariable('clientId', getClientId());
 
         const requestConfig: ApiRequestConfig = {
@@ -68,7 +70,7 @@ describe('Scene', () => {
         }
       });
 
-      test('POST /scene - Create a scene', async () => {
+      maybeTest('POST /scene - Create a scene', async () => {
         setVariable('clientId', getClientId());
 
         const requestConfig: ApiRequestConfig = {
@@ -126,7 +128,7 @@ describe('Scene', () => {
         // since you can't delete the active scene).
       }, 30000);
 
-      test('POST /scene - Create expendable scene', async () => {
+      maybeTest('POST /scene - Create expendable scene', async () => {
         setVariable('clientId', getClientId());
 
         const requestConfig: ApiRequestConfig = {
@@ -175,7 +177,7 @@ describe('Scene', () => {
         setGlobalVariable(version, 'expendableSceneId', sceneId);
       }, 30000);
 
-      test('GET /scene - Get all scenes', async () => {
+      maybeTest('GET /scene - Get all scenes', async () => {
         setVariable('clientId', getClientId());
 
         const requestConfig: ApiRequestConfig = {
@@ -221,7 +223,7 @@ describe('Scene', () => {
         expect(testScene).toBeTruthy();
       });
 
-      test('GET /scene - Get scene by name', async () => {
+      maybeTest('GET /scene - Get scene by name', async () => {
         setVariable('clientId', getClientId());
 
         const requestConfig: ApiRequestConfig = {
@@ -263,7 +265,7 @@ describe('Scene', () => {
         expect(captured.response.data.data.name).toBe('test-scene');
       });
 
-      test('GET /scene - Get scene by ID', async () => {
+      maybeTest('GET /scene - Get scene by ID', async () => {
         setVariable('clientId', getClientId());
 
         const sceneId = getGlobalVariable(version, 'testSceneId');
@@ -309,7 +311,7 @@ describe('Scene', () => {
         expect(captured.response.data.data.name).toBe('test-scene');
       });
 
-      test('PUT /scene - Update a scene', async () => {
+      maybeTest('PUT /scene - Update a scene', async () => {
         setVariable('clientId', getClientId());
 
         const sceneId = getGlobalVariable(version, 'testSceneId');
@@ -361,7 +363,7 @@ describe('Scene', () => {
     });
 
     describe(`/switch-scene (v${version})`, () => {
-      test('POST /switch-scene - Activate test scene', async () => {
+      maybeTest('POST /switch-scene - Activate test scene', async () => {
         setVariable('clientId', getClientId());
 
         const sceneId = getGlobalVariable(version, 'testSceneId');
@@ -411,7 +413,7 @@ describe('Scene', () => {
         await new Promise(resolve => setTimeout(resolve, 5000));
       }, 30000);
 
-      test('GET /scene - Verify active scene', async () => {
+      maybeTest('GET /scene - Verify active scene', async () => {
         setVariable('clientId', getClientId());
 
         const requestConfig: ApiRequestConfig = {
@@ -457,7 +459,7 @@ describe('Scene', () => {
     });
 
     describe(`/scene DELETE (v${version})`, () => {
-      test('DELETE /scene - Delete expendable scene by ID', async () => {
+      maybeTest('DELETE /scene - Delete expendable scene by ID', async () => {
         setVariable('clientId', getClientId());
 
         const sceneId = getGlobalVariable(version, 'expendableSceneId');

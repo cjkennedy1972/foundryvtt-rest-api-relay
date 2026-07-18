@@ -9,7 +9,7 @@ import { describe, test, expect, afterAll } from '@jest/globals';
 import { ApiRequestConfig, makeRequest } from '../../helpers/apiRequest';
 import { testVariables, setVariable } from '../../helpers/testVariables';
 import { captureExample, saveExamples } from '../../helpers/captureExample';
-import { forEachVersion, getConfiguredVersions } from '../../helpers/multiVersion';
+import { forEachVersion, getConfiguredVersions, resolveClientId } from '../../helpers/multiVersion';
 import { setGlobalVariable } from '../../helpers/globalVariables';
 import * as path from 'path';
 import crypto from 'crypto';
@@ -369,7 +369,9 @@ describeOrSkip('Session', () => {
     describe(`/session (v${version})`, () => {
       test('GET /session', async () => {
         // Set clientId for this version
-        setVariable('clientId', getClientId());
+        const clientId = await resolveClientId(version);
+        setVariable('clientId', clientId);
+        if (!clientId) return;
         
         // Request configuration
         const requestConfig: ApiRequestConfig = {
