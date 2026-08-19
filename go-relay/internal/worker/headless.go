@@ -1931,6 +1931,14 @@ func loginToFoundry(ctx context.Context, username, password string) (string, err
 			if (!usernameInput || !passwordInput) return 'fail:username or password input not found';
 			if (!form) return 'fail:form not found';
 
+			// Record the notifications already on screen so the verdict poll
+			// below only reacts to ones this submit produces. Foundry shows a
+			// permanent "window dimensions" error notification in headless
+			// Chrome, which would otherwise read as a rejected login.
+			window.__aigmNotifySeen = Array.from(
+				document.querySelectorAll('#notifications li')
+			).map(e => e.dataset.id);
+
 			usernameInput.value = %q;
 			usernameInput.dispatchEvent(new Event('input', { bubbles: true }));
 			usernameInput.dispatchEvent(new Event('change', { bubbles: true }));
@@ -1970,15 +1978,24 @@ func loginToFoundry(ctx context.Context, username, password string) (string, err
 	defer verdictCancel()
 	if err := chromedp.Run(verdictCtx, chromedp.Poll(`
 		(function() {
-			const note = document.querySelector('#notifications .notification.error, .notification.error');
-			if (note) return 'err:' + note.textContent.trim().substring(0, 200);
+			// Only notifications raised since the submit count. __aigmNotifySeen
+			// is undefined once the page navigates away on success, which is
+			// fine — the join-form check below settles that case.
+			const seen = window.__aigmNotifySeen || [];
+			const fresh = Array.from(
+				document.querySelectorAll('#notifications li.notification.error')
+			).find(n => !seen.includes(n.dataset.id));
+			if (fresh) return 'err:' + fresh.textContent.trim().substring(0, 200);
 			if (!document.querySelector('form[name="join"]')) return 'ok';
 			return null;
 		})()
 	`, &verdict, chromedp.WithPollingTimeout(8*time.Second))); err != nil {
-		// Neither outcome resolved in time. Not fatal on its own — the caller
-		// still waits for the game canvas, which is the authoritative check.
-		log.Warn().Err(err).Msg("loginToFoundry: no join verdict observed; deferring to canvas wait")
+		// Expected on the happy path: a successful join navigates away from
+		// /join immediately, which tears down the target this poll runs in
+		// ("Inspected target navigated or closed"). Debug, not warn — the
+		// canvas wait below is the authoritative check either way, and a
+		// warning on every successful login is pure noise.
+		log.Debug().Err(err).Msg("loginToFoundry: no join verdict observed; deferring to canvas wait")
 	}
 	if strings.HasPrefix(verdict, "err:") {
 		msg := strings.TrimPrefix(verdict, "err:")
@@ -1987,9 +2004,15 @@ func loginToFoundry(ctx context.Context, username, password string) (string, err
 		// (_is_permanent_headless_error in relay_proc/manager.py) to stop
 		// retrying a failure that no retry or restart can repair. Do not
 		// reword them without updating that check.
+		// Phrasings verified against Foundry v14.367, which localises these
+		// rather than emitting the raw JOIN.Error* keys:
+		//   `The requested User, "x", does not exist.`
+		//   `Invalid password provided for ai-gm!`
 		switch {
-		case strings.Contains(lowered, "doesnotexist"), strings.Contains(lowered, "does not exist"):
+		case strings.Contains(lowered, "does not exist"), strings.Contains(lowered, "doesnotexist"):
 			return "", fmt.Errorf("configured Foundry user not found on this server (check credential settings): %s", msg)
+		case strings.Contains(lowered, "invalid password"), strings.Contains(lowered, "passwordincorrect"):
+			return "", fmt.Errorf("configured Foundry user password was rejected (check credential settings): %s", msg)
 		case strings.Contains(lowered, "alreadyactive"),
 			strings.Contains(lowered, "alreadyloggedin"),
 			strings.Contains(lowered, "already logged in"):
