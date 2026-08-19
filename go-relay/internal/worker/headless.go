@@ -1959,6 +1959,44 @@ func loginToFoundry(ctx context.Context, username, password string) (string, err
 	if strings.HasPrefix(result, "fail:") {
 		return "", fmt.Errorf("login form setup failed: %s", strings.TrimPrefix(result, "fail:"))
 	}
+
+	// Submitting the form only means the browser sent it. Foundry rejects a bad
+	// join by re-rendering /join with an error notification, which would
+	// otherwise surface much later as an opaque "canvas never appeared"
+	// timeout. Wait for the join form to go away (success) or an error to
+	// appear, whichever happens first.
+	var verdict string
+	verdictCtx, verdictCancel := context.WithTimeout(loginCtx, 8*time.Second)
+	defer verdictCancel()
+	if err := chromedp.Run(verdictCtx, chromedp.Poll(`
+		(function() {
+			const note = document.querySelector('#notifications .notification.error, .notification.error');
+			if (note) return 'err:' + note.textContent.trim().substring(0, 200);
+			if (!document.querySelector('form[name="join"]')) return 'ok';
+			return null;
+		})()
+	`, &verdict, chromedp.WithPollingTimeout(8*time.Second))); err != nil {
+		// Neither outcome resolved in time. Not fatal on its own — the caller
+		// still waits for the game canvas, which is the authoritative check.
+		log.Warn().Err(err).Msg("loginToFoundry: no join verdict observed; deferring to canvas wait")
+	}
+	if strings.HasPrefix(verdict, "err:") {
+		msg := strings.TrimPrefix(verdict, "err:")
+		lowered := strings.ToLower(msg)
+		// These two phrasings are load-bearing: the AI engine matches on them
+		// (_is_permanent_headless_error in relay_proc/manager.py) to stop
+		// retrying a failure that no retry or restart can repair. Do not
+		// reword them without updating that check.
+		switch {
+		case strings.Contains(lowered, "doesnotexist"), strings.Contains(lowered, "does not exist"):
+			return "", fmt.Errorf("configured Foundry user not found on this server (check credential settings): %s", msg)
+		case strings.Contains(lowered, "alreadyactive"),
+			strings.Contains(lowered, "alreadyloggedin"),
+			strings.Contains(lowered, "already logged in"):
+			return "", fmt.Errorf("configured Foundry user is already logged in (another active session may be holding the slot): %s", msg)
+		}
+		return "", fmt.Errorf("login rejected by Foundry: %s", msg)
+	}
 	userID := strings.TrimPrefix(result, "ok:")
 	// Extract just the username from the result string
 	if idx := strings.LastIndex(userID, ":"); idx > 0 {
