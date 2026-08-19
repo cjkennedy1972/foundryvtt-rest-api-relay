@@ -31,6 +31,7 @@ type Client struct {
 	ipAddress         string
 	sendCh            chan []byte
 	done              chan struct{}
+	closeMsg          []byte // parting close frame, written by writePump on shutdown
 }
 
 // ClientInfo holds metadata about a client for API responses.
@@ -103,6 +104,14 @@ func (c *Client) writePump() {
 				return
 			}
 		case <-c.done:
+			// Send any parting close frame here rather than from the
+			// caller: writePump is the only goroutine allowed to write,
+			// and gorilla panics on concurrent writers. Reading closeMsg
+			// is safe — it is set before close(c.done), which
+			// happens-before this receive.
+			if c.closeMsg != nil {
+				c.conn.WriteMessage(websocket.CloseMessage, c.closeMsg)
+			}
 			return
 		}
 	}
@@ -165,6 +174,24 @@ func (c *Client) Disconnect() {
 		close(c.done)
 		c.conn.Close()
 	}
+}
+
+// DisconnectWithReason closes the client connection, first handing writePump a
+// close frame to send on its way out. Use this instead of writing the frame
+// directly: only writePump may write to the socket, and a second concurrent
+// writer panics inside gorilla — which, from a bare goroutine, takes the whole
+// relay process down.
+func (c *Client) DisconnectWithReason(code int, text string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.connected {
+		return
+	}
+	c.connected = false
+	c.closeMsg = websocket.FormatCloseMessage(code, text)
+	// Deliberately no c.conn.Close() here — writePump's deferred Close runs
+	// after it has sent closeMsg. Closing the socket now would race it.
+	close(c.done)
 }
 
 // MarkDisconnected marks the client as disconnected without closing the socket.
