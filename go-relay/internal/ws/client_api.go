@@ -137,6 +137,19 @@ func clientAPIResolveAndValidate(manager *ClientManager, cfg *ClientAPIConfig, t
 	// Verify client exists and belongs to this API key
 	foundryClient := manager.GetClient(clientID)
 	if foundryClient == nil {
+		// The clientId was known up front (scoped key or explicit param), so
+		// the auto-resolve block above was skipped and auto-start never ran.
+		// An offline-but-named world is exactly the case auto-start exists
+		// for, so try it here before rejecting.
+		if cfg.AutoStart != nil {
+			if autoID := cfg.AutoStart(matchKey, clientID, scopedUserID); autoID != "" {
+				log.Info().Str("clientId", autoID).Msg("WS auto-started headless session for offline client")
+				clientID = autoID
+				foundryClient = manager.GetClient(clientID)
+			}
+		}
+	}
+	if foundryClient == nil {
 		log.Warn().Str("clientId", clientID).Msg("WS /ws/api rejected: client not found")
 		return "", "", "", "", nil, "Invalid clientId", http.StatusNotFound
 	}

@@ -1913,82 +1913,61 @@ func createWorld(ctx context.Context, title, systemID string) error {
 func loginToFoundry(ctx context.Context, username, password string) (string, error) {
 	loginCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
+	log.Info().Str("username", username).Msg("loginToFoundry: waiting for password input")
 	if err := chromedp.Run(loginCtx, chromedp.WaitVisible(`input[name="password"]`, chromedp.ByQuery)); err != nil {
 		return "", fmt.Errorf("login form not found: %w", err)
 	}
+	log.Info().Msg("loginToFoundry: password input found, filling form")
 
-	// Pre-submit: if a user-select dropdown is present, verify the target user
-	// exists and is not already active (disabled/greyed = already logged in).
-	var preCheck string
-	if err := chromedp.Run(loginCtx, chromedp.Evaluate(fmt.Sprintf(`
-		(function() {
-			const sel = document.querySelector('select[name="userid"]');
-			if (!sel) return 'ok'; // single-user or password-only form
-			const opts = Array.from(sel.options);
-			const match = opts.find(o => o.textContent.trim().toLowerCase() === %q);
-			if (!match) return 'not-found';
-			if (match.disabled) return 'already-active';
-			return 'ok';
-		})()
-	`, strings.ToLower(username)), &preCheck)); err != nil {
-		log.Warn().Err(err).Msg("Pre-submit user check eval failed; proceeding without pre-check")
-	}
-	switch preCheck {
-	case "not-found":
-		return "", fmt.Errorf("configured Foundry user not found on this server (check credential settings)")
-	case "already-active":
-		return "", fmt.Errorf("configured Foundry user is already logged in (another active session may be holding the slot)")
-	}
-
-	// POST /join with an explicit password instead of filling the form: Foundry's
-	// form drops an empty password field on submit, so a passwordless GM (stored as
-	// createPassword("")) can never log in through it. Posting ourselves guarantees
-	// the password — including "" — reaches the server.
+	// Fill and submit the join form. Let the form's native JavaScript handle submission
+	// to ensure any event listeners and form processing work correctly.
 	js := fmt.Sprintf(`
 		(async function() {
-			var userId = %q;
-			const sel = document.querySelector('select[name="userid"]');
-			if (sel) {
-				const match = Array.from(sel.options).find(o => o.textContent.trim().toLowerCase() === %q);
-				if (match) userId = match.value;
-			}
-			try {
-				const resp = await fetch('/join', {
-					method: 'POST',
-					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({ action: 'join', userid: userId, password: %q })
-				});
-				if (resp.ok) {
-					let data = {};
-					try { data = await resp.json(); } catch (e) {}
-					if (!data || data.status !== 'success') return 'fail:' + ((data && data.message) || 'join was not accepted');
-					setTimeout(function() { window.location.href = data.redirect || '/game'; }, 0);
-					return 'ok:' + userId;
-				}
-				const t = (await resp.text()).replace(/\s+/g, ' ').trim().substring(0, 120);
-				return 'fail:' + t;
-			} catch (e) {
-				return 'fail:' + (e && e.message ? e.message : 'join request failed');
+			const usernameInput = document.querySelector('input[name="username"]');
+			const passwordInput = document.querySelector('input[name="password"]');
+			const form = document.querySelector('form[name="join"]');
+			const submitBtn = form ? form.querySelector('button[type="submit"]') : null;
+
+			if (!usernameInput || !passwordInput) return 'fail:username or password input not found';
+			if (!form) return 'fail:form not found';
+
+			usernameInput.value = %q;
+			usernameInput.dispatchEvent(new Event('input', { bubbles: true }));
+			usernameInput.dispatchEvent(new Event('change', { bubbles: true }));
+
+			passwordInput.value = %q;
+			passwordInput.dispatchEvent(new Event('input', { bubbles: true }));
+
+			if (submitBtn) {
+				submitBtn.click();
+				return 'ok:submitted_via_button:' + %q;
+			} else {
+				form.submit();
+				return 'ok:submitted_via_form:' + %q;
 			}
 		})()
-	`, username, strings.ToLower(username), password)
+	`, username, password, username, username)
 
 	var result string
 	if err := chromedp.Run(loginCtx, chromedp.Evaluate(js, &result,
 		func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) },
 	)); err != nil {
+		log.Error().Err(err).Msg("loginToFoundry: JavaScript evaluation failed")
 		return "", fmt.Errorf("login eval: %w", err)
 	}
+	log.Info().Str("result", result).Msg("loginToFoundry: form submission result")
 	if strings.HasPrefix(result, "fail:") {
-		return "", fmt.Errorf("login rejected by Foundry: %s", strings.TrimPrefix(result, "fail:"))
+		return "", fmt.Errorf("login form setup failed: %s", strings.TrimPrefix(result, "fail:"))
 	}
 	userID := strings.TrimPrefix(result, "ok:")
+	// Extract just the username from the result string
+	if idx := strings.LastIndex(userID, ":"); idx > 0 {
+		userID = userID[idx+1:]
+	}
 	if userID == "" {
 		userID = username
 	}
-	// The POST already returned Foundry's authoritative verdict; the caller waits
-	// for the game canvas to confirm the world finished loading.
-	log.Info().Str("userId", userID).Msg("Headless login succeeded via POST /join")
+	log.Info().Str("userId", userID).Msg("Headless login form submitted successfully")
 	return userID, nil
 }
 
