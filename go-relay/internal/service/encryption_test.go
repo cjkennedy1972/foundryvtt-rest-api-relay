@@ -32,7 +32,15 @@ func TestEncryptProducesDistinctIVs(t *testing.T) {
 
 func TestDecryptRejectsTamperedAuthTag(t *testing.T) {
 	enc, _ := Encrypt("secret", testHexKey)
-	tampered := enc.AuthTag[:len(enc.AuthTag)-2] + "00"
+	// Flip to a byte guaranteed to differ from the original, instead of a fixed
+	// "00" which had a 1/256 chance of matching the real last byte and making
+	// this test flaky (no actual tampering occurred).
+	lastByte := enc.AuthTag[len(enc.AuthTag)-2:]
+	replacement := "00"
+	if lastByte == "00" {
+		replacement = "ff"
+	}
+	tampered := enc.AuthTag[:len(enc.AuthTag)-2] + replacement
 	if _, err := Decrypt(enc.Ciphertext, enc.IV, tampered, testHexKey); err == nil {
 		t.Error("expected error decrypting with tampered auth tag")
 	}
