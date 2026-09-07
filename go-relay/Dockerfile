@@ -36,19 +36,30 @@ ARG ALGOLIA_APP_ID
 ARG ALGOLIA_SEARCH_API_KEY
 ARG ALGOLIA_INDEX_NAME
 
+# Non-interactive build: the docs install runs inside the root workspace and
+# pnpm otherwise prompts before purging a conflicting modules dir, failing with
+# ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY.
+ENV CI=true
+
 WORKDIR /workspace
 
-# Install root deps first (provides tsx for example injection)
-COPY package.json pnpm-lock.yaml ./
+# Install root deps first (provides tsx for example injection).
+# pnpm-workspace.yaml is required: pnpm 10+ reads `overrides` from it, and the
+# lockfile records those overrides. Omitting it makes pnpm compute an empty
+# override set and fail --frozen-lockfile with ERR_PNPM_LOCKFILE_CONFIG_MISMATCH.
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN --mount=type=cache,target=/root/.cache/node/corepack \
     --mount=type=cache,target=/root/.local/share/pnpm/store \
     corepack enable && pnpm install --frozen-lockfile --ignore-scripts
 
-# Install docs deps
+# Install docs deps. --ignore-workspace matches the repo's own `docs:install`
+# script: docs/ is NOT a member of pnpm-workspace.yaml (it declares no
+# `packages:`), so without this pnpm resolves it against the root workspace and
+# never creates docs/node_modules, leaving `docusaurus: not found` at build time.
 COPY docs/package.json docs/pnpm-lock.yaml docs/
 RUN --mount=type=cache,target=/root/.cache/node/corepack \
     --mount=type=cache,target=/root/.local/share/pnpm/store \
-    cd docs && pnpm install --frozen-lockfile
+    cd docs && pnpm install --frozen-lockfile --ignore-workspace
 
 # Copy content after deps so content changes don't bust the install cache
 COPY docs/ docs/

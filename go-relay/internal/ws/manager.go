@@ -105,11 +105,16 @@ func (m *ClientManager) AddClient(conn *websocket.Conn, id, token, tokenName, wo
 					delete(m.tokenGroups, token)
 				}
 			}
-			go func() {
-				existing.conn.WriteMessage(websocket.CloseMessage,
-					websocket.FormatCloseMessage(1000, "Replaced by reconnect"))
-				existing.conn.Close()
-			}()
+			// The evicted client never reaches RemoveClient (its read pump
+			// calls RemoveClientIfMatch, which no longer matches), so
+			// decrement the gauge here — AddClient increments it
+			// unconditionally a few lines below.
+			metrics.WSConnectionsActive.Dec()
+			// Tear down via the client's own path: it stops writePump (which
+			// would otherwise leak, blocked on sendCh forever) and lets that
+			// goroutine emit the close frame. Writing the frame from here
+			// would race writePump's writer and panic the process.
+			go existing.DisconnectWithReason(websocket.CloseNormalClosure, "Replaced by reconnect")
 			// Fall through to register the new connection below.
 		} else {
 			m.mu.Unlock()

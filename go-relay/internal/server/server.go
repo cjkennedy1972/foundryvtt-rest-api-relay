@@ -622,12 +622,21 @@ func New(ctx context.Context, cfg *config.Config, db *database.DB, redis *config
 
 		// Expose the same logic to the WebSocket client API path.
 		s.headlessAutoStart = func(masterAPIKey, scopedClientID string) string {
-			if scopedClientID == "" {
-				return ""
-			}
 			user, err := s.db.UserStore().FindByAPIKeyHash(context.Background(), masterAPIKey)
 			if err != nil || user == nil {
 				return ""
+			}
+			// A master (unscoped) key carries no clientId, so there is nothing
+			// to launch from the key alone. Fall back to the account's known
+			// clients: if exactly one is configured for auto-start, that world
+			// is unambiguous and is what the caller must have meant. Two or
+			// more is ambiguous — keep returning "" so the caller has to name
+			// the world rather than have the relay guess.
+			if scopedClientID == "" {
+				scopedClientID = s.soleAutoStartableClient(user.ID)
+				if scopedClientID == "" {
+					return ""
+				}
 			}
 			return autoStart(user.ID, scopedClientID)
 		}
@@ -635,6 +644,30 @@ func New(ctx context.Context, cfg *config.Config, db *database.DB, redis *config
 
 	s.router = s.setupRouter()
 	return s
+}
+
+// soleAutoStartableClient returns the user's only known client that is both
+// enabled for auto-start and has a credential assigned. It returns "" when
+// there is no such client or when there is more than one, since guessing
+// between worlds would launch the wrong one.
+func (s *Server) soleAutoStartableClient(userID int64) string {
+	known, err := s.db.KnownClientStore().FindAllByUser(context.Background(), userID)
+	if err != nil {
+		log.Warn().Err(err).Int64("userId", userID).Msg("Auto-start: could not list known clients")
+		return ""
+	}
+	var found string
+	for _, kc := range known {
+		if !bool(kc.AutoStartOnRemoteRequest) || !kc.CredentialID.Valid {
+			continue
+		}
+		if found != "" {
+			log.Warn().Int64("userId", userID).Msg("Auto-start skipped: multiple worlds are configured for auto-start; name one with clientId")
+			return ""
+		}
+		found = kc.ClientID
+	}
+	return found
 }
 
 // Router returns the chi router.
