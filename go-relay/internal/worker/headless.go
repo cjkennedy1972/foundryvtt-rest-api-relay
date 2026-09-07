@@ -369,6 +369,9 @@ func (m *HeadlessManager) WaitForLaunch(clientID string, timeout time.Duration) 
 		}
 		return "", fmt.Errorf("launch failed for client %s", clientID)
 	case <-time.After(timeout):
+		// Load-bearing phrasing: nightly-e2e.yml in foundryvtt-ai-gm greps
+		// for it to decide a failed run is transient and worth one retry.
+		// Reword it and the retry silently stops firing.
 		return "", fmt.Errorf("timed out waiting for headless session (client %s)", clientID)
 	}
 }
@@ -987,6 +990,9 @@ func (m *HeadlessManager) LaunchSession(apiKey, foundryURL, username, password, 
 		log.Warn().Str("url", pageURL).Str("title", pageTitle).Msg("Browser state at timeout")
 
 		tabCancel()
+		// Load-bearing phrasing: nightly-e2e.yml in foundryvtt-ai-gm greps
+		// for it to decide a failed run is transient and worth one retry.
+		// Reword it and the retry silently stops firing.
 		return "", "", fmt.Errorf("game canvas did not load: %w", err)
 	}
 
@@ -1039,6 +1045,9 @@ func (m *HeadlessManager) LaunchSession(apiKey, foundryURL, username, password, 
 			delete(m.pending, sessionID)
 			m.mu.Unlock()
 			tabCancel()
+			// Load-bearing phrasing: nightly-e2e.yml in foundryvtt-ai-gm greps
+			// for it to decide a failed run is transient and worth one retry.
+			// Reword it and the retry silently stops firing.
 			return "", "", fmt.Errorf("client connection timed out after %s", clientPollTimeout)
 		}
 	}
@@ -1472,6 +1481,9 @@ func (m *HeadlessManager) launchHeadlessWithSeededToken(ctx context.Context, opt
 	defer loadCancel()
 	if err := waitForAnySelector(loadCtx, []string{"#ui-left", "#sidebar", "#game", ".vtt"}); err != nil {
 		tabCancel()
+		// Load-bearing phrasing: nightly-e2e.yml in foundryvtt-ai-gm greps
+		// for it to decide a failed run is transient and worth one retry.
+		// Reword it and the retry silently stops firing.
 		return "", fmt.Errorf("game canvas did not load: %w", err)
 	}
 
@@ -1547,6 +1559,9 @@ func (m *HeadlessManager) launchHeadlessWithSeededToken(ctx context.Context, opt
 			delete(m.pending, sessionID)
 			m.mu.Unlock()
 			tabCancel()
+			// Load-bearing phrasing: nightly-e2e.yml in foundryvtt-ai-gm greps
+			// for it to decide a failed run is transient and worth one retry.
+			// Reword it and the retry silently stops firing.
 			return "", fmt.Errorf("seeded headless client did not register within %s", autoStartPollTimeout)
 		}
 	}
