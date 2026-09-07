@@ -1930,12 +1930,18 @@ func loginToFoundry(ctx context.Context, username, password string) (string, err
 			const usernameInput = document.querySelector('input[name="username"]');
 			const userSelect = document.querySelector('select[name="userid"]');
 			const passwordInput = document.querySelector('input[name="password"]');
-			const form = document.querySelector('form[name="join"]');
-			const submitBtn = form ? form.querySelector('button[type="submit"]') : null;
 
 			if (!passwordInput) return 'fail:password input not found';
 			if (!usernameInput && !userSelect) return 'fail:join form has neither input[name="username"] nor select[name="userid"]';
-			if (!form) return 'fail:form not found';
+
+			// Ask the password field which form owns it rather than matching a
+			// form name — Foundry has moved that markup between versions, and a
+			// stale selector here reads as "no login form" on a page that has one.
+			const form = passwordInput.form || document.querySelector('form[name="join"]');
+			const submitBtn = (form || document).querySelector('button[type="submit"]');
+			if (!form && !submitBtn) {
+				return 'fail:password input has no owning form and no submit button on the page';
+			}
 
 			// Record the notifications already on screen so the verdict poll
 			// below only reacts to ones this submit produces. Foundry shows a
@@ -1969,7 +1975,7 @@ func loginToFoundry(ctx context.Context, username, password string) (string, err
 				submitBtn.click();
 				return 'ok:submitted_via_button:' + %[1]q;
 			} else {
-				form.submit();
+				form.requestSubmit ? form.requestSubmit() : form.submit();
 				return 'ok:submitted_via_form:' + %[1]q;
 			}
 		})()
@@ -2005,7 +2011,10 @@ func loginToFoundry(ctx context.Context, username, password string) (string, err
 				document.querySelectorAll('#notifications li.notification.error')
 			).find(n => !seen.includes(n.dataset.id));
 			if (fresh) return 'err:' + fresh.textContent.trim().substring(0, 200);
-			if (!document.querySelector('form[name="join"]')) return 'ok';
+			// Still on the join screen? Key this on the user control the
+			// page-type detector uses, for the same reason as above: a form
+			// name that never matches would report success immediately.
+			if (!document.querySelector('select[name="userid"], input[name="username"]')) return 'ok';
 			return null;
 		})()
 	`, &verdict, chromedp.WithPollingTimeout(8*time.Second))); err != nil {
