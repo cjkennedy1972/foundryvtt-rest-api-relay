@@ -1923,13 +1923,25 @@ func loginToFoundry(ctx context.Context, username, password string) (string, err
 	// to ensure any event listeners and form processing work correctly.
 	js := fmt.Sprintf(`
 		(async function() {
+			// Foundry's join form identifies the user with a <select name="userid">
+			// of the world's users, not a free-text name. Only some builds and
+			// configurations also render an input[name="username"], so handle
+			// whichever this world shows.
 			const usernameInput = document.querySelector('input[name="username"]');
+			const userSelect = document.querySelector('select[name="userid"]');
 			const passwordInput = document.querySelector('input[name="password"]');
-			const form = document.querySelector('form[name="join"]');
-			const submitBtn = form ? form.querySelector('button[type="submit"]') : null;
 
-			if (!usernameInput || !passwordInput) return 'fail:username or password input not found';
-			if (!form) return 'fail:form not found';
+			if (!passwordInput) return 'fail:password input not found';
+			if (!usernameInput && !userSelect) return 'fail:join form has neither input[name="username"] nor select[name="userid"]';
+
+			// Ask the password field which form owns it rather than matching a
+			// form name — Foundry has moved that markup between versions, and a
+			// stale selector here reads as "no login form" on a page that has one.
+			const form = passwordInput.form || document.querySelector('form[name="join"]');
+			const submitBtn = (form || document).querySelector('button[type="submit"]');
+			if (!form && !submitBtn) {
+				return 'fail:password input has no owning form and no submit button on the page';
+			}
 
 			// Record the notifications already on screen so the verdict poll
 			// below only reacts to ones this submit produces. Foundry shows a
@@ -1939,22 +1951,35 @@ func loginToFoundry(ctx context.Context, username, password string) (string, err
 				document.querySelectorAll('#notifications li')
 			).map(e => e.dataset.id);
 
-			usernameInput.value = %q;
-			usernameInput.dispatchEvent(new Event('input', { bubbles: true }));
-			usernameInput.dispatchEvent(new Event('change', { bubbles: true }));
+			if (usernameInput) {
+				usernameInput.value = %[1]q;
+				usernameInput.dispatchEvent(new Event('input', { bubbles: true }));
+				usernameInput.dispatchEvent(new Event('change', { bubbles: true }));
+			} else {
+				const options = Array.from(userSelect.options);
+				const wanted = options.find(o => o.textContent.trim() === %[1]q);
+				if (!wanted) {
+					// Name the users that ARE offered — a mismatch here is a world
+					// config problem, and the list says so immediately.
+					const offered = options.map(o => o.textContent.trim()).filter(Boolean).join(', ');
+					return 'fail:no user named ' + %[1]q + ' in the join list [' + offered + ']';
+				}
+				userSelect.value = wanted.value;
+				userSelect.dispatchEvent(new Event('change', { bubbles: true }));
+			}
 
-			passwordInput.value = %q;
+			passwordInput.value = %[2]q;
 			passwordInput.dispatchEvent(new Event('input', { bubbles: true }));
 
 			if (submitBtn) {
 				submitBtn.click();
-				return 'ok:submitted_via_button:' + %q;
+				return 'ok:submitted_via_button:' + %[1]q;
 			} else {
-				form.submit();
-				return 'ok:submitted_via_form:' + %q;
+				form.requestSubmit ? form.requestSubmit() : form.submit();
+				return 'ok:submitted_via_form:' + %[1]q;
 			}
 		})()
-	`, username, password, username, username)
+	`, username, password)
 
 	var result string
 	if err := chromedp.Run(loginCtx, chromedp.Evaluate(js, &result,
@@ -1986,7 +2011,10 @@ func loginToFoundry(ctx context.Context, username, password string) (string, err
 				document.querySelectorAll('#notifications li.notification.error')
 			).find(n => !seen.includes(n.dataset.id));
 			if (fresh) return 'err:' + fresh.textContent.trim().substring(0, 200);
-			if (!document.querySelector('form[name="join"]')) return 'ok';
+			// Still on the join screen? Key this on the user control the
+			// page-type detector uses, for the same reason as above: a form
+			// name that never matches would report success immediately.
+			if (!document.querySelector('select[name="userid"], input[name="username"]')) return 'ok';
 			return null;
 		})()
 	`, &verdict, chromedp.WithPollingTimeout(8*time.Second))); err != nil {

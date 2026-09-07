@@ -148,4 +148,14 @@ FOUNDRY_USERNAME=Gamemaster FOUNDRY_PASSWORD="$GM_PASSWORD" pnpm test
 TEST_EXIT_CODE=$?
 set -e
 
+# The EXIT trap tears the stack down with `down -v`, taking the container logs
+# with it — dump them here while they still exist.
+if [ "$TEST_EXIT_CODE" -ne 0 ]; then
+  echo "" >&2
+  echo "=== Tests failed. Recent relay logs: ===" >&2
+  docker compose -f docker-compose.test.yml logs --tail=150 relay >&2 || true
+  echo "=== Recent Foundry logs: ===" >&2
+  docker compose -f docker-compose.test.yml logs --tail=80 foundry >&2 || true
+fi
+
 exit $TEST_EXIT_CODE

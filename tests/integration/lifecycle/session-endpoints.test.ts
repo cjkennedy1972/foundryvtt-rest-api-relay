@@ -345,6 +345,15 @@ describeOrSkip('Session', () => {
         capturedExamples.push(captured);
 
         // Assertions
+        // /start-session answers any launch failure with 408, putting the real
+        // reason in the body — surface it, or the whole suite's cascade of
+        // "No clientId" failures has no explanation in the log.
+        if (captured.response.status !== 200) {
+          console.error(
+            `/start-session failed: ${captured.response.status} ` +
+            JSON.stringify(captured.response.data)
+          );
+        }
         expect(captured.response.status).toBe(200);
         expect(captured.response.data.clientId).toBeTruthy();
 
