@@ -82,6 +82,8 @@ func New(ctx context.Context, cfg *config.Config, db *database.DB, redis *config
 		// remote-request handler. Done after construction to avoid an
 		// import cycle in the worker package.
 		s.Headless.SetDeps(&worker.HeadlessDeps{DB: db, Cfg: cfg})
+	} else {
+		log.Warn().Msg("Headless sessions disabled (ALLOW_HEADLESS=false); auto-start of offline worlds is unavailable")
 	}
 
 	// Build the unified notification dispatcher
@@ -578,6 +580,10 @@ func New(ctx context.Context, cfg *config.Config, db *database.DB, redis *config
 			if targetClientID == "" {
 				return ""
 			}
+			log.Info().
+				Str("clientId", targetClientID).
+				Int64("userId", userID).
+				Msg("Headless auto-start requested for offline world")
 			if s.Headless.IsLaunching(targetClientID) {
 				log.Info().Str("clientId", targetClientID).Msg("Headless session launching, queuing request")
 				clientID, err := s.Headless.WaitForLaunch(targetClientID, 5*time.Minute)
@@ -599,11 +605,16 @@ func New(ctx context.Context, cfg *config.Config, db *database.DB, redis *config
 		}
 
 		helpers.AutoStartFunc = func(reqCtx *helpers.RequestContext, targetClientID string) string {
-			if reqCtx == nil || targetClientID == "" {
+			if reqCtx == nil {
+				return ""
+			}
+			if targetClientID == "" {
+				log.Debug().Msg("Auto-start skipped: request has no target clientId (pass ?clientId=... or bind the scoped key to a client)")
 				return ""
 			}
 			user, ok := reqCtx.GetUser()
 			if !ok {
+				log.Warn().Str("clientId", targetClientID).Msg("Auto-start skipped: no authenticated user on request")
 				return ""
 			}
 			return autoStart(user.ID, targetClientID)
@@ -1088,14 +1099,21 @@ func (s *Server) fanoutHookEvent(clientID string, data map[string]interface{}) {
 
 // fanoutCombatEvent sends combat events to combat SSE and WS subscribers.
 func (s *Server) fanoutCombatEvent(clientID string, data map[string]interface{}) {
-	jsonBytes, err := json.Marshal(data)
+	// The Foundry module wraps its payload: {type:"combat-event", data:{eventType:..., ...}}
+	// Unwrap the inner "data" so eventType and encounterId are at the top level for SSE consumers.
+	payload := data
+	if nested, ok := data["data"].(map[string]interface{}); ok {
+		payload = nested
+	}
+
+	jsonBytes, err := json.Marshal(payload)
 	if err != nil {
 		return
 	}
 	jsonStr := string(jsonBytes)
 
-	eventType, _ := data["eventType"].(string)
-	encounterId, _ := data["encounterId"].(string)
+	eventType, _ := payload["eventType"].(string)
+	encounterId, _ := payload["encounterId"].(string)
 
 	for _, conn := range s.SSEManager.GetCombatSSE(clientID) {
 		if conn.EncounterID != "" && conn.EncounterID != encounterId {
@@ -1117,7 +1135,7 @@ func (s *Server) fanoutCombatEvent(clientID string, data map[string]interface{})
 		if conn.Channel != "combat-events" {
 			continue
 		}
-		conn.SendFunc(map[string]interface{}{"type": "combat-event", "event": "combat-" + eventType, "data": data})
+		conn.SendFunc(map[string]interface{}{"type": "combat-event", "event": "combat-" + eventType, "data": payload})
 	}
 }
 

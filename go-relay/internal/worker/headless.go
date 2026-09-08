@@ -1119,12 +1119,16 @@ func (m *HeadlessManager) doAutoStartForKnownClient(ctx context.Context, userID 
 	db := m.headlessDeps.DB
 	cfg := m.headlessDeps.Cfg
 
+	log.Info().Str("clientId", clientID).Int64("userId", userID).Msg("Headless auto-start: resolving credentials for offline world")
+
 	// 1. User lookup → apiKeyHash for ClientManager registration
 	user, err := db.UserStore().FindByID(ctx, userID)
 	if err != nil || user == nil {
+		log.Warn().Err(err).Str("clientId", clientID).Int64("userId", userID).Msg("Headless auto-start blocked: owning user not found")
 		return "", fmt.Errorf("user %d not found", userID)
 	}
 	if !user.APIKeyHash.Valid || user.APIKeyHash.String == "" {
+		log.Warn().Str("clientId", clientID).Int64("userId", userID).Msg("Headless auto-start blocked: user has no relay key hash (regenerate the relay key in the dashboard)")
 		return "", fmt.Errorf("user %d has no apiKeyHash (must regenerate relay key)", userID)
 	}
 	accountIdentifier := user.APIKeyHash.String
@@ -1132,18 +1136,22 @@ func (m *HeadlessManager) doAutoStartForKnownClient(ctx context.Context, userID 
 	// 2. KnownClient lookup + auto-start gate
 	known, err := db.KnownClientStore().FindByClientID(ctx, userID, clientID)
 	if err != nil || known == nil {
+		log.Warn().Err(err).Str("clientId", clientID).Int64("userId", userID).Msg("Headless auto-start blocked: clientId is not a known client for this account (connect this world once so it is remembered)")
 		return "", fmt.Errorf("clientId %s not found in known clients for user %d", clientID, userID)
 	}
 	if !bool(known.AutoStartOnRemoteRequest) {
+		log.Warn().Str("clientId", clientID).Int64("userId", userID).Msg("Headless auto-start blocked: auto-start is not enabled for this client (turn it on in the Connections tab)")
 		return "", fmt.Errorf("clientId %s does not have auto-start enabled", clientID)
 	}
 
 	// 3. Credential resolution — explicit credentialId required; no implicit fallback
 	if !known.CredentialID.Valid {
+		log.Warn().Str("clientId", clientID).Int64("userId", userID).Msg("Headless auto-start blocked: no credential assigned to this client (select one in the Connections tab)")
 		return "", fmt.Errorf("clientId %s has auto-start enabled but no credential assigned; select one in Connections", clientID)
 	}
 	credential, err := db.CredentialStore().FindByID(ctx, known.CredentialID.Int64)
 	if err != nil || credential == nil || credential.UserID != userID {
+		log.Warn().Err(err).Str("clientId", clientID).Int64("userId", userID).Int64("credentialId", known.CredentialID.Int64).Msg("Headless auto-start blocked: assigned credential is missing or not owned by this account (re-create it in the Credentials tab)")
 		return "", fmt.Errorf("KnownClient.credentialId references missing or unauthorized credential %d", known.CredentialID.Int64)
 	}
 
@@ -1152,6 +1160,7 @@ func (m *HeadlessManager) doAutoStartForKnownClient(ctx context.Context, userID 
 		credential.PasswordAuthTag, cfg.CredentialsEncryptionKey,
 	)
 	if err != nil {
+		log.Warn().Err(err).Str("clientId", clientID).Int64("userId", userID).Int64("credentialId", known.CredentialID.Int64).Msg("Headless auto-start blocked: could not decrypt stored password (CREDENTIALS_ENCRYPTION_KEY may have changed since the credential was saved — re-save it)")
 		return "", fmt.Errorf("decrypt credential: %w", err)
 	}
 
@@ -1189,12 +1198,20 @@ func (m *HeadlessManager) doAutoStartForKnownClient(ctx context.Context, userID 
 	// near-clone of LaunchSession with two key differences:
 	//   - We inject the localStorage seed BEFORE navigation
 	//   - We poll for the EXACT clientId, not the legacy foundry-{userId} format
+	// World to launch on Foundry's setup screen: prefer the credential's
+	// explicit default world; fall back to the world this client last connected
+	// as. Empty means skip world selection (Foundry already has a world active).
+	worldToLaunch := credential.World
+	if worldToLaunch == "" {
+		worldToLaunch = known.WorldTitle.String
+	}
+
 	resultClientID, err := m.launchHeadlessWithSeededToken(ctx, launchSeededOpts{
 		AccountIdentifier: accountIdentifier,
 		FoundryURL:        credential.FoundryURL,
 		Username:          credential.FoundryUsername,
 		Password:          password,
-		WorldName:         "",
+		WorldName:         worldToLaunch,
 		ExpectedClientID:  clientID,
 		ExpectedWorldID:   known.WorldID.String,
 		SeedToken:         rawToken,
@@ -1682,12 +1699,17 @@ func selectWorld(ctx context.Context, worldName string) error {
 	if err := chromedp.Run(selCtx, chromedp.WaitVisible(`li.package.world`, chromedp.ByQuery)); err != nil {
 		return fmt.Errorf("world list not found: %w", err)
 	}
+	// Match on either the world's display title or its id (data-package-id slug),
+	// so callers can pass whichever they have. Comparison is case-insensitive.
 	js := fmt.Sprintf(`
 		(function() {
+			const target = %q;
 			const worlds = document.querySelectorAll('li.package.world');
 			for (const w of worlds) {
 				const title = w.querySelector('h3.package-title, .package-title');
-				if (title && title.textContent.trim().toLowerCase() === %q) {
+				const titleText = title ? title.textContent.trim().toLowerCase() : '';
+				const id = (w.getAttribute('data-package-id') || w.dataset.packageId || '').trim().toLowerCase();
+				if (titleText === target || (id && id === target)) {
 					const playBtn = w.querySelector('a.control.play, button.control.play');
 					if (playBtn) { playBtn.click(); return 'clicked'; }
 				}
