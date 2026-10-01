@@ -64,7 +64,7 @@ func sceneImageHandler(mgr *ws.ClientManager, pending *ws.PendingRequests) http.
 			return
 		}
 
-		requestID := fmt.Sprintf("scene-screenshot_%d", time.Now().UnixMilli())
+		requestID := helpers.NewRequestID("scene-screenshot")
 		responseCh := make(chan *ws.WSResponse, 1)
 		pending.Store(requestID, &ws.PendingRequest{ResponseCh: responseCh, Type: "scene-screenshot", ClientID: clientID, Format: format, Timestamp: time.Now()})
 

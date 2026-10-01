@@ -72,7 +72,7 @@ func sheetHandler(mgr *ws.ClientManager, pending *ws.PendingRequests) http.Handl
 			return
 		}
 
-		requestID := fmt.Sprintf("sheet-screenshot_%d", time.Now().UnixMilli())
+		requestID := helpers.NewRequestID("sheet-screenshot")
 		responseCh := make(chan *ws.WSResponse, 1)
 		pending.Store(requestID, &ws.PendingRequest{ResponseCh: responseCh, Type: "sheet-screenshot", ClientID: clientID, Format: format, Timestamp: time.Now()})
 

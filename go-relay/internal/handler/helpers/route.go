@@ -284,7 +284,7 @@ func CreateAPIRoute(manager *ws.ClientManager, pending *ws.PendingRequests, cfg 
 		}
 
 		// Build request ID
-		requestID := fmt.Sprintf("%s_%d", cfg.Type, time.Now().UnixMilli())
+		requestID := NewRequestID(cfg.Type)
 
 		// Register pending request
 		responseCh := make(chan *ws.WSResponse, 1)
