@@ -4,11 +4,14 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/rs/zerolog/log"
 )
 
 // Config holds all application configuration loaded from environment variables.
@@ -77,6 +80,10 @@ type Config struct {
 	ChromeWindowHeight      int    // headless viewport height (≥768 for Foundry)
 	ChromeEnableSHM         bool   // allow Chrome to use /dev/shm (needs ≥256MB shm)
 	ChromeGPUMode           string // rendering backend: auto|gpu|xvfb|swiftshader|nvidia
+
+	// HeadlessStorageSeed is extra localStorage entries seeded into every headless session
+	// (HEADLESS_LOCALSTORAGE_SEED), e.g. a paired module's credential.
+	HeadlessStorageSeed map[string]string
 
 	// Admin dashboard
 	AdminJWTSecret             string
@@ -149,6 +156,7 @@ func Load() *Config {
 		CaptureBrowserConsole:   getEnv("CAPTURE_BROWSER_CONSOLE", ""),
 		BrowserLogRetentionDays: getEnvInt("BROWSER_LOG_RETENTION_DAYS", 3),
 		ChromeUserDataDir:       getEnv("CHROME_USER_DATA_DIR", ""),
+		HeadlessStorageSeed:     loadLocalStorageSeed(),
 		ChromeJSHeapMB:          getEnvInt("CHROME_JS_HEAP_MB", 2048),
 		ChromeWindowWidth:       getEnvInt("CHROME_WINDOW_WIDTH", 1280),
 		ChromeWindowHeight:      getEnvInt("CHROME_WINDOW_HEIGHT", 800),
@@ -363,4 +371,29 @@ func getEnvBool(key string, fallback bool) bool {
 		return strings.EqualFold(val, "true") || val == "1"
 	}
 	return fallback
+}
+
+// ParseLocalStorageSeed parses HEADLESS_LOCALSTORAGE_SEED: a JSON object mapping a localStorage key
+// to the exact string to store under it. Foundry keeps a client-scope setting as the JSON text of
+// its value, so the strings are already JSON (e.g. {"mod.clientId": "\"abc\""}). Empty means none.
+func ParseLocalStorageSeed(raw string) (map[string]string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	seed := map[string]string{}
+	if err := json.Unmarshal([]byte(raw), &seed); err != nil {
+		return nil, fmt.Errorf("HEADLESS_LOCALSTORAGE_SEED must be a JSON object of string values: %w", err)
+	}
+	return seed, nil
+}
+
+// loadLocalStorageSeed reads the seed from the environment. A malformed value is logged and
+// ignored rather than taking the relay down for an optional feature.
+func loadLocalStorageSeed() map[string]string {
+	seed, err := ParseLocalStorageSeed(os.Getenv("HEADLESS_LOCALSTORAGE_SEED"))
+	if err != nil {
+		log.Error().Err(err).Msg("ignoring HEADLESS_LOCALSTORAGE_SEED")
+		return nil
+	}
+	return seed
 }
