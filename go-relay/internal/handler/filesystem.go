@@ -2,7 +2,6 @@ package handler
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -107,7 +106,7 @@ func uploadHandler(mgr *ws.ClientManager, pending *ws.PendingRequests) http.Hand
 			return
 		}
 
-		requestID := fmt.Sprintf("upload-file_%d", time.Now().UnixMilli())
+		requestID := helpers.NewRequestID("upload-file")
 		responseCh := make(chan *ws.WSResponse, 1)
 		pending.Store(requestID, &ws.PendingRequest{
 			ResponseCh: responseCh, Type: "upload-file", ClientID: clientID, Timestamp: time.Now(),
