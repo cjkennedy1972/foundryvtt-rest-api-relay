@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	goruntime "runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -226,6 +227,9 @@ type HeadlessManager struct {
 	enableSHM       bool   // allow Chrome to use /dev/shm
 	renderMode      string // configured render mode (auto|gpu|xvfb|swiftshader)
 
+	// storageSeed maps a Foundry origin to localStorage entries seeded for sessions on that origin only.
+	storageSeed map[string]map[string]string
+
 	// headlessDeps is set after construction by SetDeps. Used by
 	// AutoStartForKnownClient (the remote-request auto-start path) to look
 	// up users, credentials, and persist headless connection tokens.
@@ -290,6 +294,7 @@ func NewHeadlessManager(clientManager *ws.ClientManager, redis *config.RedisClie
 		chromePath:       cfg.ChromePath,
 		dataDir:          cfg.DataDir,
 		userDataDir:      userDataDir,
+		storageSeed:      cfg.HeadlessStorageSeed,
 		jsHeapMB:         cfg.ChromeJSHeapMB,
 		windowWidth:      cfg.ChromeWindowWidth,
 		windowHeight:     cfg.ChromeWindowHeight,
@@ -810,6 +815,65 @@ func injectConnectionTokenSeed(tabCtx context.Context, rawToken string) error {
 	}))
 }
 
+// localStorageSeedScript builds the page script that seeds extra localStorage entries for one origin.
+// Foundry stores a client-scope setting as the JSON text of its value, so the values are written as
+// given. The script does nothing on any other origin: it runs on every document the tab loads, so a
+// redirect off the Foundry host must not receive the values. An entry is written only when its key is
+// absent, so a module that rotates a credential (a re-pair) is not reverted by the next reload. Keys,
+// values and the origin are JSON-quoted, never interpolated raw.
+func localStorageSeedScript(origin string, seed map[string]string) (string, error) {
+	quotedOrigin, err := json.Marshal(origin)
+	if err != nil {
+		return "", err
+	}
+	keys := make([]string, 0, len(seed))
+	for k := range seed {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	fmt.Fprintf(&b, "try {\nif (window.location.origin === %s) {\n", quotedOrigin)
+	for _, k := range keys {
+		key, err := json.Marshal(k)
+		if err != nil {
+			return "", err
+		}
+		val, err := json.Marshal(seed[k])
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(&b, "if (window.localStorage.getItem(%s) === null) window.localStorage.setItem(%s, %s);\n", key, key, val)
+	}
+	b.WriteString("}\n} catch (e) { console.error(\"[headless] failed to seed localStorage:\", e); }\n")
+	return b.String(), nil
+}
+
+// seedFor returns the origin of foundryURL and the entries configured for it (none when it is not a
+// configured origin, which is the case for every URL a caller can supply that the operator did not list).
+func (m *HeadlessManager) seedFor(foundryURL string) (string, map[string]string) {
+	origin, err := config.OriginOf(foundryURL)
+	if err != nil {
+		return "", nil
+	}
+	return origin, m.storageSeed[origin]
+}
+
+// injectLocalStorageSeed installs the seed script before any page script runs. Like the connection
+// token seed, call it after creating the isolated tab context and before navigating to Foundry.
+func injectLocalStorageSeed(tabCtx context.Context, origin string, seed map[string]string) error {
+	if len(seed) == 0 {
+		return nil
+	}
+	script, err := localStorageSeedScript(origin, seed)
+	if err != nil {
+		return fmt.Errorf("build localStorage seed: %w", err)
+	}
+	return chromedp.Run(tabCtx, chromedp.ActionFunc(func(ctx context.Context) error {
+		_, err := page.AddScriptToEvaluateOnNewDocument(script).Do(ctx)
+		return err
+	}))
+}
+
 // LaunchSession launches a headless Foundry session. If seedToken is non-empty,
 // the connection token is injected into localStorage before navigation so the
 // Foundry module can connect without a manual pairing flow.
@@ -876,6 +940,14 @@ func (m *HeadlessManager) LaunchSession(apiKey, foundryURL, username, password, 
 			return "", "", fmt.Errorf("inject connection token seed: %w", err)
 		}
 		log.Info().Msg("Seeded connection token into headless browser localStorage")
+	}
+	seedOrigin, seedEntries := m.seedFor(foundryURL)
+	if err := injectLocalStorageSeed(tabCtx, seedOrigin, seedEntries); err != nil {
+		tabCancel()
+		return "", "", fmt.Errorf("inject localStorage seed: %w", err)
+	}
+	if len(seedEntries) > 0 {
+		log.Info().Str("origin", seedOrigin).Int("entries", len(seedEntries)).Msg("Seeded extra localStorage entries")
 	}
 
 	// Set viewport
@@ -1438,6 +1510,14 @@ func (m *HeadlessManager) launchHeadlessWithSeededToken(ctx context.Context, opt
 		return "", fmt.Errorf("inject connection token seed: %w", err)
 	}
 	log.Info().Msg("Seeded connection token into headless browser localStorage (AutoStart path)")
+	seedOrigin, seedEntries := m.seedFor(opts.FoundryURL)
+	if err := injectLocalStorageSeed(tabCtx, seedOrigin, seedEntries); err != nil {
+		tabCancel()
+		return "", fmt.Errorf("inject localStorage seed: %w", err)
+	}
+	if len(seedEntries) > 0 {
+		log.Info().Str("origin", seedOrigin).Int("entries", len(seedEntries)).Msg("Seeded extra localStorage entries (AutoStart path)")
+	}
 
 	// Set viewport
 	chromedp.Run(tabCtx, chromedp.EmulateViewport(int64(m.windowWidth), int64(m.windowHeight)))

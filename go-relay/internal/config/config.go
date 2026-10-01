@@ -4,11 +4,15 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/rs/zerolog/log"
 )
 
 // Config holds all application configuration loaded from environment variables.
@@ -77,6 +81,10 @@ type Config struct {
 	ChromeWindowHeight      int    // headless viewport height (≥768 for Foundry)
 	ChromeEnableSHM         bool   // allow Chrome to use /dev/shm (needs ≥256MB shm)
 	ChromeGPUMode           string // rendering backend: auto|gpu|xvfb|swiftshader|nvidia
+
+	// HeadlessStorageSeed maps a Foundry origin to extra localStorage entries seeded into headless
+	// sessions for that origin only (HEADLESS_LOCALSTORAGE_SEED), e.g. a paired module's credential.
+	HeadlessStorageSeed map[string]map[string]string
 
 	// Admin dashboard
 	AdminJWTSecret             string
@@ -149,6 +157,7 @@ func Load() *Config {
 		CaptureBrowserConsole:   getEnv("CAPTURE_BROWSER_CONSOLE", ""),
 		BrowserLogRetentionDays: getEnvInt("BROWSER_LOG_RETENTION_DAYS", 3),
 		ChromeUserDataDir:       getEnv("CHROME_USER_DATA_DIR", ""),
+		HeadlessStorageSeed:     loadLocalStorageSeed(),
 		ChromeJSHeapMB:          getEnvInt("CHROME_JS_HEAP_MB", 2048),
 		ChromeWindowWidth:       getEnvInt("CHROME_WINDOW_WIDTH", 1280),
 		ChromeWindowHeight:      getEnvInt("CHROME_WINDOW_HEIGHT", 800),
@@ -363,4 +372,62 @@ func getEnvBool(key string, fallback bool) bool {
 		return strings.EqualFold(val, "true") || val == "1"
 	}
 	return fallback
+}
+
+// OriginOf returns the origin (scheme://host[:port], lowercased) of an http(s) URL.
+func OriginOf(rawURL string) (string, error) {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return "", err
+	}
+	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return "", fmt.Errorf("%q is not an http(s) URL with a host", rawURL)
+	}
+	return strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host), nil
+}
+
+// ParseLocalStorageSeed parses HEADLESS_LOCALSTORAGE_SEED: a JSON object mapping a Foundry origin to
+// the localStorage entries to seed for it, {"http://foundry:30000": {"mod.clientId": "\"abc\""}}.
+// Foundry keeps a client-scope setting as the JSON text of its value, so the strings are already
+// JSON. Empty means none.
+//
+// Entries are scoped by origin on purpose: they are secrets (a paired module's credential), and the
+// Foundry URL of a session comes from the caller. Seeding every session would hand them to whatever
+// server an API-key holder points a session at.
+func ParseLocalStorageSeed(raw string) (map[string]map[string]string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	var decoded map[string]map[string]*string
+	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
+		return nil, fmt.Errorf("HEADLESS_LOCALSTORAGE_SEED must be a JSON object of origin -> {key: string}: %w", err)
+	}
+	seed := make(map[string]map[string]string, len(decoded))
+	for origin, entries := range decoded {
+		if normalized, err := OriginOf(origin); err != nil || normalized != origin {
+			return nil, fmt.Errorf("HEADLESS_LOCALSTORAGE_SEED key %q must be an origin like http://host:port (scheme and host lowercase, no path)", origin)
+		}
+		if entries == nil {
+			return nil, fmt.Errorf("HEADLESS_LOCALSTORAGE_SEED %q must map to an object of key: string entries, not null", origin)
+		}
+		seed[origin] = make(map[string]string, len(entries))
+		for key, value := range entries {
+			if value == nil {
+				return nil, fmt.Errorf("HEADLESS_LOCALSTORAGE_SEED %q: %q is null; values must be strings", origin, key)
+			}
+			seed[origin][key] = *value
+		}
+	}
+	return seed, nil
+}
+
+// loadLocalStorageSeed reads the seed from the environment. A malformed value is logged and
+// ignored rather than taking the relay down for an optional feature.
+func loadLocalStorageSeed() map[string]map[string]string {
+	seed, err := ParseLocalStorageSeed(os.Getenv("HEADLESS_LOCALSTORAGE_SEED"))
+	if err != nil {
+		log.Error().Err(err).Msg("ignoring HEADLESS_LOCALSTORAGE_SEED")
+		return nil
+	}
+	return seed
 }
